@@ -1,27 +1,58 @@
-cmake_minimum_required(VERSION 3.24)
-
-include(cmake/CPM.cmake)
-
-# Fetch cpp-library before project()
-# Check https://github.com/stlab/cpp-library/releases for the latest version
-CPMAddPackage("gh:stlab/cpp-library@5.2.0")
-include(${cpp-library_SOURCE_DIR}/cpp-library.cmake)
-
-# Enable dependency tracking before project()
-cpp_library_enable_dependency_tracking()
+cmake_minimum_required(VERSION 3.28)
 
 # Now declare project
-project(tentacle-tree)
+project(tentacle-tree
+    VERSION 0.0.0
+    DESCRIPTION "Tentacle Tree: A C++ library for incremental octree"
+    LANGUAGES CXX
+)
 
-# Enable CTest infrastructure (required for tests/examples to work)
-include(CTest)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Setup library
-cpp_library_setup(
-    DESCRIPTION "A reimplementation of an incremental octree"
-    NAMESPACE tt
-    HEADERS tentacle-tree.hpp
-    SOURCES tentacle-tree.cpp
-    EXAMPLES example.cpp
-    TESTS tests.cpp
+find_package(doctest CONFIG REQUIRED)
+
+set(COMPILE_OPTIONS
+    -Wall
+    -Wextra
+    -Wpedantic
+    -Wconversion
+    -Wsign-conversion
+    -Wshadow
+    -Wnon-virtual-dtor
+    -Wold-style-cast
+    -Wcast-align
+    -Wunused
+    -Woverloaded-virtual
+    -Wnull-dereference
+    -Wdouble-promotion
+    -Wformat=2
+)
+
+add_library(tentacle-tree
+    src/tentacle_tree.cpp
+)
+
+target_include_directories(tentacle-tree
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+)
+
+target_compile_options(tentacle-tree
+    PRIVATE
+        ${COMPILE_OPTIONS}
+)
+
+add_executable(tentacle-tree-test
+    tests/tests.cpp
+)
+target_link_libraries(tentacle-tree-test
+    PRIVATE
+        tentacle-tree
+        doctest::doctest
+)
+target_compile_options(tentacle-tree-test
+    PRIVATE
+        ${COMPILE_OPTIONS}
 )
