@@ -3,8 +3,10 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
 
-#include <rerun.hpp>
 #include <functional>
+#include <optional>
+#include <random>
+#include <rerun.hpp>
 
 template <typename FloatT>
 struct Point {
@@ -99,11 +101,11 @@ TEST_CASE("computeCenter") {
     {
         // Seems like the implementation is derived from the original Octree paper. Thus we check
         // that we get the same result as the original.
-        std::array<float, 3> min_coords = {-1.0f, -2.0f, 1.0f};
-        std::array<float, 3> max_coords = {1.0f, 2.0f, 4.0f};
+        const std::array<float, 3> min_coords = {-1.0f, -2.0f, 1.0f};
+        const std::array<float, 3> max_coords = {1.0f, 2.0f, 4.0f};
 
-        auto [center, max_extent] =
-            tt::impl::computeCenterAndMaxExtent<float>(min_coords, max_coords);
+        tt::impl::BoundingBox<float> bbox_f{min_coords, max_coords};
+        auto [center, max_extent] = tt::impl::computeCenterAndMaxExtent(bbox_f);
         auto [orig_center, orig_max_extent] =
             originalComputeCenterAndMaxExtent(min_coords, max_coords);
 
@@ -115,8 +117,8 @@ TEST_CASE("computeCenter") {
     {
         std::array<double, 3> min_coords = {-10.0, -20.0, 10.0};
         std::array<double, 3> max_coords = {10.0, 20.0, 40.0};
-        auto [center, max_extent] =
-            tt::impl::computeCenterAndMaxExtent<double>(min_coords, max_coords);
+        tt::impl::BoundingBox<double> bbox_d { min_coords, max_coords };
+        auto [center, max_extent] = tt::impl::computeCenterAndMaxExtent(bbox_d);
 
         CHECK(center[0] == doctest::Approx(0.0));
         CHECK(center[1] == doctest::Approx(0.0));
@@ -410,23 +412,31 @@ std::vector<rerun::Position3D> toRerunPositions(const std::vector<Point<FloatT>>
 template <tt::Point3d PointT>
 void toRerunBoxes(const tt::Node<PointT> &node,
                   std::vector<rerun::components::PoseTranslation3D> &centers,
-                  std::vector<rerun::components::HalfSize3D> &half_sizes) {
-    centers.push_back({node.center[0], node.center[1], node.center[2]});
-    half_sizes.push_back({node.half_extent, node.half_extent, node.half_extent});
+                  std::vector<rerun::components::HalfSize3D> &half_sizes,
+                  const std::optional<rerun::Color> &color = std::nullopt) {
+    centers.push_back({static_cast<float>(node.center[0]), static_cast<float>(node.center[1]),
+                       static_cast<float>(node.center[2])});
+    half_sizes.push_back({static_cast<float>(node.half_extent),
+                          static_cast<float>(node.half_extent),
+                          static_cast<float>(node.half_extent)});
     for (const auto &child : node.children) {
         if (!child) {
             continue;
         }
-        toRerunBoxes(*child, centers, half_sizes);
+        toRerunBoxes(*child, centers, half_sizes, color);
     }
 }
 
 template <tt::Point3d PointT>
-rerun::Boxes3D toRerunBoxes(const tt::TentacleTree<PointT> &tree) {
+rerun::Boxes3D toRerunBoxes(const tt::TentacleTree<PointT> &tree,
+                            const std::optional<rerun::Color> &color = std::nullopt) {
     const auto root = tree.root();
     std::vector<rerun::components::PoseTranslation3D> centers;
     std::vector<rerun::components::HalfSize3D> half_sizes;
-    toRerunBoxes(*root, centers, half_sizes);
+    toRerunBoxes(*root, centers, half_sizes, color);
+    if (color.has_value()) {
+        return rerun::Boxes3D::from_centers_and_half_sizes(centers, half_sizes).with_colors(*color);
+    }
     return rerun::Boxes3D::from_centers_and_half_sizes(centers, half_sizes);
 }
 
@@ -464,23 +474,28 @@ TEST_CASE("initialize") {
                 collect_leaves(child.get());
             }
         }
-        if (is_leaf) leaves.push_back(node);
+        if (is_leaf)
+            leaves.push_back(node);
     };
     collect_leaves(root);
 
     // Ensure we have at least one leaf and total point count matches input
     REQUIRE(!leaves.empty());
     std::size_t total_points_in_leaves = 0;
-    for (const auto *leaf : leaves) total_points_in_leaves += leaf->points.size();
+    for (const auto *leaf : leaves)
+        total_points_in_leaves += leaf->points.size();
     CHECK(total_points_in_leaves == points.size());
 
     // For each leaf, compute its top-level octant relative to the root center
     const auto root_center = root->center;
     for (const auto *leaf : leaves) {
         std::size_t top_code = 0;
-        if (leaf->center[0] > root_center[0]) top_code |= 0b0001;
-        if (leaf->center[1] > root_center[1]) top_code |= 0b0010;
-        if (leaf->center[2] > root_center[2]) top_code |= 0b0100;
+        if (leaf->center[0] > root_center[0])
+            top_code |= 0b0001;
+        if (leaf->center[1] > root_center[1])
+            top_code |= 0b0010;
+        if (leaf->center[2] > root_center[2])
+            top_code |= 0b0100;
 
         // Each point stored in this leaf must belong to the same top-level octant
         for (const auto &p : leaf->points) {
@@ -495,4 +510,100 @@ TEST_CASE("initialize") {
     //
     // rec.log("points", rerun::Points3D(toRerunPositions(points)));
     // rec.log("boxes", toRerunBoxes(tree));
+}
+
+template <typename FloatT>
+class PointCloudTestFixture {
+  public:
+    PointCloudTestFixture() : points_(generateCube()) {}
+
+    static std::vector<Point<FloatT>> generateCube(const std::array<FloatT, 3> &center = {
+                                                       FloatT(0), FloatT(0), FloatT(0)}) {
+        // Generate equally distributed points in a cube of side length 2 centered at 'center'
+        std::vector<Point<FloatT>> points;
+        points.reserve(64);
+        const auto spacing = FloatT(2.0 / 3.0);
+        const FloatT start_x = center[0] - FloatT(1.0);
+        const FloatT start_y = center[1] - FloatT(1.0);
+        const FloatT start_z = center[2] - FloatT(1.0);
+
+        for (int i = 0; i < 4; ++i) {
+            for (int j = 0; j < 4; ++j) {
+                for (int k = 0; k < 4; ++k) {
+                    points.push_back(Point<FloatT>{{static_cast<FloatT>(start_x + i * spacing),
+                                                    static_cast<FloatT>(start_y + j * spacing),
+                                                    static_cast<FloatT>(start_z + k * spacing)}});
+                }
+            }
+        }
+        return points;
+    }
+
+  protected:
+    std::vector<Point<FloatT>> points_;
+};
+
+TEST_CASE_FIXTURE(PointCloudTestFixture<double>, "addPointsOutside") {
+    tt::TentacleTree<Point<double>> tree(5, 0.01);
+    tree.insert(points_.begin(), points_.end());
+
+    const auto rec = rerun::RecordingStream("rerun_example_box3d_batch");
+    rec.spawn().exit_on_failure();
+
+    rec.set_time_sequence("frame", 0); // init frame
+    rec.log("points", rerun::Points3D(toRerunPositions(points_)));
+    rec.set_time_sequence("frame", 1);
+    rec.log("boxes", toRerunBoxes(tree));
+
+    const auto new_points = generateCube({5.0, 5.0, 5.0});
+    rec.set_time_sequence("frame", 2); // init frame
+    rec.log("points", rerun::Points3D(toRerunPositions(new_points)));
+
+    tree.insert(new_points.begin(), new_points.end());
+    rec.set_time_sequence("frame", 3);
+    rec.log("boxes", toRerunBoxes(tree, rerun::Color(0, 0, 255)));
+}
+
+TEST_CASE("isBoxInNode") {
+    tt::Node<Point<float>> node;
+    node.center = {0.0f, 0.0f, 0.0f};
+    node.half_extent = 1.0f;
+
+    using BBoxF = tt::impl::BoundingBox<float>;
+
+    // Fully inside
+    BBoxF inside;
+    inside.min_coords = {-0.5f, -0.5f, -0.5f};
+    inside.max_coords = {0.5f, 0.5f, 0.5f};
+    CHECK(tt::impl::isBoxInNode<Point<float>>(inside, node));
+
+    // Fully outside (disjoint)
+    BBoxF outside;
+    outside.min_coords = {2.0f, 2.0f, 2.0f};
+    outside.max_coords = {3.0f, 3.0f, 3.0f};
+    CHECK(!tt::impl::isBoxInNode<Point<float>>(outside, node));
+
+    // Touching at face (min == node_max on x) -> considered overlapping by implementation
+    BBoxF touching;
+    touching.min_coords = {1.0f, -0.5f, -0.5f};
+    touching.max_coords = {2.0f, 0.5f, 0.5f};
+    CHECK(tt::impl::isBoxInNode<Point<float>>(touching, node));
+
+    // Barely outside (just beyond node_max) -> should be false
+    BBoxF barely_out;
+    barely_out.min_coords = {1.0001f, -0.5f, -0.5f};
+    barely_out.max_coords = {2.0f, 0.5f, 0.5f};
+    CHECK(!tt::impl::isBoxInNode<Point<float>>(barely_out, node));
+
+    // Overlapping partially
+    BBoxF overlap;
+    overlap.min_coords = {0.5f, 0.5f, 0.5f};
+    overlap.max_coords = {1.5f, 1.5f, 1.5f};
+    CHECK(tt::impl::isBoxInNode<Point<float>>(overlap, node));
+
+    // Overlaps in x/y but separated in z -> should be false
+    BBoxF sep_z;
+    sep_z.min_coords = {0.5f, 0.5f, 2.0f};
+    sep_z.max_coords = {1.5f, 1.5f, 3.0f};
+    CHECK(!tt::impl::isBoxInNode<Point<float>>(sep_z, node));
 }
