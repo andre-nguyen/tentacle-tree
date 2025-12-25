@@ -1,4 +1,5 @@
-#pragma once
+#ifndef TT_TENTACLE_TREE_HPP
+#define TT_TENTACLE_TREE_HPP
 
 #include <concepts>
 #include <cstdint>
@@ -9,52 +10,74 @@ namespace tt {
 
 template <typename T>
 concept Point3d = requires(T p) {
-    // Ensure we can access x, y, z as methods and operator[]
-    { p.x() } -> std::convertible_to<typename T::ValueT>;
-    { p.y() } -> std::convertible_to<typename T::ValueT>;
-    { p.z() } -> std::convertible_to<typename T::ValueT>;
-    { p[0] } -> std::convertible_to<typename T::ValueT>;
-    { p[1] } -> std::convertible_to<typename T::ValueT>;
-    { p[2] } -> std::convertible_to<typename T::ValueT>;
+  // Ensure we can access x, y, z as methods and operator[]
+  { p.x() } -> std::convertible_to<typename T::Float>;
+  { p.y() } -> std::convertible_to<typename T::Float>;
+  { p.z() } -> std::convertible_to<typename T::Float>;
+  { p[0] } -> std::convertible_to<typename T::Float>;
+  { p[1] } -> std::convertible_to<typename T::Float>;
+  { p[2] } -> std::convertible_to<typename T::Float>;
 };
 
-template <Point3d PointT, typename CoordT>
+// Type trait to extract the coordinate type from a Point3d conforming type
+template <Point3d T>
+struct PointCoordinateType {
+  using Type = typename T::Float;
+};
+
+// Helper alias for convenience
+template <Point3d T>
+using PointCoordinateTypeT = typename PointCoordinateType<T>::Type;
+
+template <Point3d PointT>
 struct Node {
-    CoordT center[3]; // aka c_o
-    CoordT half_extent;    // aka e_o
+  using CoordT = PointCoordinateTypeT<PointT>;
 
-    // Note both vectors are actually contrained on the max size, so we could feasibly use
-    // boost::static_vector
-    std::vector<std::unique_ptr<Node>>
-        children;               // Paper says pointer to fist child, but vector is easier to manage
-    std::vector<PointT> points; // ?? Paper mentions coordinates AND indices?
+  std::array<CoordT, 3> center; // aka c_o
+  CoordT half_extent;           // aka e_o
 
-    Node() {
-        center[0] = CoordT(0);
-        center[1] = CoordT(0);
-        center[2] = CoordT(0);
-        half_extent = CoordT(0);
-    }
+  // Note both vectors are actually contrained on the max size, so we could feasibly use
+  // boost::static_vector
+  std::array<std::unique_ptr<Node>, 8>
+      children;               // Paper says pointer to fist child, but vector is easier to manage
+  std::vector<PointT> points; // ?? Paper mentions coordinates AND indices?
+
+  Node() {
+    center[0] = CoordT(0);
+    center[1] = CoordT(0);
+    center[2] = CoordT(0);
+    half_extent = CoordT(0);
+  }
+
+  Node(const std::array<CoordT, 3> &center_, CoordT half_extent_)
+      : center(center_), half_extent(half_extent_) {}
 };
 
-template <Point3d PointT, typename CoordT>
+template <Point3d PointT>
 class TentacleTree {
-  public:
-    TentacleTree(std::size_t bucket_size, CoordT min_extent);
+public:
+  using CoordT = PointCoordinateTypeT<PointT>;
 
-    template <std::random_access_iterator BeginIt, std::random_access_iterator EndIt>
-    void insert(BeginIt begin, EndIt end);
+  TentacleTree(std::size_t bucket_size, CoordT min_extent);
 
-  private:
-    std::size_t bucket_size_;
-    CoordT min_extent_; // aka e_min
+  template <std::random_access_iterator BeginIt, std::random_access_iterator EndIt>
+  void insert(BeginIt begin, EndIt end);
 
-    Node<PointT, CoordT> root_;
+  Node<PointT> *root() const { return root_.get(); }
 
-    template <std::random_access_iterator BeginIt, std::random_access_iterator EndIt>
-    void createOctant(std::array<CoordT, 3> center, CoordT half_extent, BeginIt begin, EndIt end);
+private:
+  std::size_t bucket_size_;
+  CoordT min_extent_; // aka e_min
+
+  std::unique_ptr<Node<PointT>> root_;
+
+  template <std::random_access_iterator BeginIt, std::random_access_iterator EndIt>
+  std::unique_ptr<Node<PointT>> createOctant(const std::array<CoordT, 3> &center,
+                                             CoordT half_extent, BeginIt begin, EndIt end);
 };
 
 } // namespace tt
 
 #include "impl_tentacle_tree.hpp"
+
+#endif // TT_TENTACLE_TREE_HPP

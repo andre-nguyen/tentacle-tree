@@ -11,6 +11,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(doctest CONFIG REQUIRED)
+find_package(rerun_sdk CONFIG REQUIRED)
 
 set(COMPILE_OPTIONS
     -Wall
@@ -44,6 +45,7 @@ target_compile_options(tentacle-tree
         ${COMPILE_OPTIONS}
 )
 
+include(doctest)
 add_executable(tentacle-tree-test
     tests/tests.cpp
 )
@@ -51,8 +53,10 @@ target_link_libraries(tentacle-tree-test
     PRIVATE
         tentacle-tree
         doctest::doctest
+        rerun_sdk
 )
 target_compile_options(tentacle-tree-test
     PRIVATE
         ${COMPILE_OPTIONS}
 )
+doctest_discover_tests(tentacle-tree-test)
