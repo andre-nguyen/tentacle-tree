@@ -490,9 +490,9 @@ TEST_CASE("initialize") {
     }
 
     // Keep the visualization logging (optional)
-    const auto rec = rerun::RecordingStream("rerun_example_box3d_batch");
-    rec.spawn().exit_on_failure();
-
-    rec.log("points", rerun::Points3D(toRerunPositions(points)));
-    rec.log("boxes", toRerunBoxes(tree));
+    // const auto rec = rerun::RecordingStream("rerun_example_box3d_batch");
+    // rec.spawn().exit_on_failure();
+    //
+    // rec.log("points", rerun::Points3D(toRerunPositions(points)));
+    // rec.log("boxes", toRerunBoxes(tree));
 }

@@ -103,25 +103,45 @@ TentacleTree<PointT>::TentacleTree(std::size_t bucket_size, CoordT min_extent)
 template <Point3d PointT>
 template <std::random_access_iterator BeginIt, std::random_access_iterator EndIt>
 void TentacleTree<PointT>::insert(BeginIt begin, EndIt end) {
-  // Section II.A:  Data Structure and Construction
-  //     As for building an incremental octree, we firstly eliminate
-  // invalid points, calculate the axis-aligned bounding box of all
-  // valid points, and keep only indices and coordinates of valid
-  // points. Then, starting at the root, the i-Octree recursively
-  // splits the axis-aligned bounding box at the center into eight
-  // cubes indexed by Morton codes and subdivides all the
-  // points in current octant into each cube according to their cube
-  // indices calculated. When a stopping criteria is satisfied, a leaf
-  // octant will be created and a segment of continuous memory
-  // will be allocated to store information in points of the leaf
-  // node.
+    if (!root_) {
+        init(begin, end);
+        return;
+    }
 
-  // Note: It seems a lot of this code is actually the original octree paper code
+    // Section II.B:  Dynamic Updates
+    //    1) Incremental Update: When inserting new points, we
+    // have to consider the situation that some points may be
+    // beyond the boundary of the axis-aligned bounding box of
+    // the original tree. Once there are points out of the range of
+    // octree, we have to expand the bounding box by creating new
+    // root octant whose children contain current root octant. This
+    // process may be executed several times to ensure that all new
+    // points are within the range of the tree. Then, new points are
+    // added to the expanded octree (see Fig. 3).
 
-  // Assume all points are valid and just find the bounding box
-  auto [min_coords, max_coords] = impl::computeBoundingBox(begin, end);
-  auto [center, max_extent] = impl::computeCenterAndMaxExtent(min_coords, max_coords);
-  root_ = createOctant(center, max_extent, begin, end);
+
+}
+
+template <Point3d PointT>
+template <std::random_access_iterator BeginIt, std::random_access_iterator EndIt>
+void TentacleTree<PointT>::init(BeginIt begin, EndIt end) {
+    // Section II.A:  Data Structure and Construction
+    //     As for building an incremental octree, we firstly eliminate
+    // invalid points, calculate the axis-aligned bounding box of all
+    // valid points, and keep only indices and coordinates of valid
+    // points. Then, starting at the root, the i-Octree recursively
+    // splits the axis-aligned bounding box at the center into eight
+    // cubes indexed by Morton codes and subdivides all the
+    // points in current octant into each cube according to their cube
+    // indices calculated. When a stopping criteria is satisfied, a leaf
+    // octant will be created and a segment of continuous memory
+    // will be allocated to store information in points of the leaf
+    // node.
+
+    // Assume all points are valid and just find the bounding box
+    auto [min_coords, max_coords] = impl::computeBoundingBox(begin, end);
+    auto [center, max_extent] = impl::computeCenterAndMaxExtent(min_coords, max_coords);
+    root_ = createOctant(center, max_extent, begin, end);
 }
 
 template <Point3d PointT>
