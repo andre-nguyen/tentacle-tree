@@ -1,3 +1,4 @@
+#include <tt/impl/bounded_priority_queue.hpp>
 #include <tt/tentacle_tree.hpp>
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
@@ -11,6 +12,7 @@
 template <typename FloatT>
 struct Point {
     using Float = FloatT;
+    using value_type = FloatT; // For compatibility with STL
     [[nodiscard]] FloatT x() const { return coords[0]; }
     [[nodiscard]] FloatT y() const { return coords[1]; }
     [[nodiscard]] FloatT z() const { return coords[2]; }
@@ -104,7 +106,7 @@ TEST_CASE("computeCenter") {
         const std::array<float, 3> min_coords = {-1.0f, -2.0f, 1.0f};
         const std::array<float, 3> max_coords = {1.0f, 2.0f, 4.0f};
 
-        tt::impl::BoundingBox<float> bbox_f{min_coords, max_coords};
+        tt::BoundingBox<float> bbox_f{min_coords, max_coords};
         auto [center, max_extent] = tt::impl::computeCenterAndMaxExtent(bbox_f);
         auto [orig_center, orig_max_extent] =
             originalComputeCenterAndMaxExtent(min_coords, max_coords);
@@ -117,7 +119,7 @@ TEST_CASE("computeCenter") {
     {
         std::array<double, 3> min_coords = {-10.0, -20.0, 10.0};
         std::array<double, 3> max_coords = {10.0, 20.0, 40.0};
-        tt::impl::BoundingBox<double> bbox_d { min_coords, max_coords };
+        tt::BoundingBox<double> bbox_d{min_coords, max_coords};
         auto [center, max_extent] = tt::impl::computeCenterAndMaxExtent(bbox_d);
 
         CHECK(center[0] == doctest::Approx(0.0));
@@ -409,16 +411,35 @@ std::vector<rerun::Position3D> toRerunPositions(const std::vector<Point<FloatT>>
     return rr_positions;
 }
 
+template <typename FloatT>
+std::vector<rerun::Position3D> toRerunPositions(const tt::TentacleTree<Point<FloatT>> &tree) {
+    std::vector<rerun::Position3D> rr_positions;
+    const auto root = tree.root();
+    const auto leaves = tt::impl::collectLeafNodes(*root);
+    auto total = std::accumulate(leaves.cbegin(), leaves.cend(), std::size_t(0),
+                                 [](std::size_t acc, const tt::Node<Point<FloatT>> *node) {
+                                     return acc + node->points.size();
+                                 });
+    rr_positions.reserve(total);
+    for (const auto *leaf : leaves) {
+        for (const auto &p : leaf->points) {
+            rr_positions.emplace_back(static_cast<double>(p.x()), static_cast<double>(p.y()),
+                                      static_cast<double>(p.z()));
+        }
+    }
+    return rr_positions;
+}
+
 template <tt::Point3d PointT>
 void toRerunBoxes(const tt::Node<PointT> &node,
                   std::vector<rerun::components::PoseTranslation3D> &centers,
                   std::vector<rerun::components::HalfSize3D> &half_sizes,
                   const std::optional<rerun::Color> &color = std::nullopt) {
-    centers.push_back({static_cast<float>(node.center[0]), static_cast<float>(node.center[1]),
-                       static_cast<float>(node.center[2])});
-    half_sizes.push_back({static_cast<float>(node.half_extent),
-                          static_cast<float>(node.half_extent),
-                          static_cast<float>(node.half_extent)});
+    centers.emplace_back(static_cast<float>(node.center[0]), static_cast<float>(node.center[1]),
+                         static_cast<float>(node.center[2]));
+    half_sizes.emplace_back(static_cast<float>(node.half_extent),
+                            static_cast<float>(node.half_extent),
+                            static_cast<float>(node.half_extent));
     for (const auto &child : node.children) {
         if (!child) {
             continue;
@@ -428,16 +449,39 @@ void toRerunBoxes(const tt::Node<PointT> &node,
 }
 
 template <tt::Point3d PointT>
-rerun::Boxes3D toRerunBoxes(const tt::TentacleTree<PointT> &tree,
+rerun::Boxes3D toRerunBoxes(const tt::Node<PointT> &node,
                             const std::optional<rerun::Color> &color = std::nullopt) {
-    const auto root = tree.root();
     std::vector<rerun::components::PoseTranslation3D> centers;
     std::vector<rerun::components::HalfSize3D> half_sizes;
-    toRerunBoxes(*root, centers, half_sizes, color);
+    toRerunBoxes(node, centers, half_sizes, color);
     if (color.has_value()) {
         return rerun::Boxes3D::from_centers_and_half_sizes(centers, half_sizes).with_colors(*color);
     }
     return rerun::Boxes3D::from_centers_and_half_sizes(centers, half_sizes);
+}
+
+template <tt::Point3d PointT>
+rerun::Boxes3D toRerunBoxes(const tt::TentacleTree<PointT> &tree,
+                            const std::optional<rerun::Color> &color = std::nullopt) {
+    const auto root = tree.root();
+    return toRerunBoxes(*root, color);
+}
+
+template <typename FloatT>
+rerun::Boxes3D toRerunBoxes(const tt::BoundingBox<FloatT> &bbox,
+                            const std::optional<rerun::Color> &color = std::nullopt) {
+    if (color.has_value()) {
+        return rerun::Boxes3D::from_mins_and_sizes(
+                   {{bbox.min_coords[0], bbox.min_coords[1], bbox.min_coords[2]}},
+                   {{bbox.max_coords[0] - bbox.min_coords[0],
+                     bbox.max_coords[1] - bbox.min_coords[1],
+                     bbox.max_coords[2] - bbox.min_coords[2]}})
+            .with_colors(*color);
+    }
+    return rerun::Boxes3D::from_mins_and_sizes(
+        {{bbox.min_coords[0], bbox.min_coords[1], bbox.min_coords[2]}},
+        {{bbox.max_coords[0] - bbox.min_coords[0], bbox.max_coords[1] - bbox.min_coords[1],
+          bbox.max_coords[2] - bbox.min_coords[2]}});
 }
 
 TEST_CASE("initialize") {
@@ -543,25 +587,239 @@ class PointCloudTestFixture {
     std::vector<Point<FloatT>> points_;
 };
 
+template <typename FloatT>
+bool isClose(FloatT a, FloatT b, const FloatT epsilon = static_cast<FloatT>(1e-12)) {
+    return std::abs(a - b) < epsilon;
+}
+
 TEST_CASE_FIXTURE(PointCloudTestFixture<double>, "addPointsOutside") {
-    tt::TentacleTree<Point<double>> tree(5, 0.01);
+    tt::TentacleTree<Point<double>> tree(1, 0.01);
     tree.insert(points_.begin(), points_.end());
 
-    const auto rec = rerun::RecordingStream("rerun_example_box3d_batch");
-    rec.spawn().exit_on_failure();
+    {
+        auto leaves = tt::impl::collectLeafNodes<Point<double>>(*tree.root());
+        REQUIRE(leaves.size() == 4 * 4 * 4);
+        std::vector<bool> point_is_found(points_.size(), false);
+        for (const auto &leaf : leaves) {
+            CHECK(leaf->points.size() == 1);
+            auto it = std::find_if(points_.begin(), points_.end(),
+                                   [q = &leaf->points[0]](const Point<double> &p) {
+                                       return isClose(p.x(), q->x()) && isClose(p.y(), q->y()) &&
+                                              isClose(p.z(), q->z());
+                                   });
+            REQUIRE(it != points_.end());
+            auto index = static_cast<std::size_t>(std::distance(points_.begin(), it));
+            CHECK(!point_is_found[index]);
+            point_is_found[index] = true;
+        }
+    }
 
-    rec.set_time_sequence("frame", 0); // init frame
-    rec.log("points", rerun::Points3D(toRerunPositions(points_)));
-    rec.set_time_sequence("frame", 1);
-    rec.log("boxes", toRerunBoxes(tree));
+    // Now add points outside the initial bounding box
+    std::array<double, 3> offset = {10.0, -15.0, 20.0};
+    auto outside_points = generateCube(offset);
+    tree.insert(outside_points.begin(), outside_points.end());
+    {
+        // Check that the original points are there AND the new ones
+        auto leaves = tt::impl::collectLeafNodes<Point<double>>(*tree.root());
+        REQUIRE(leaves.size() == 2 * 4 * 4 * 4); // original + new points
+        std::vector<bool> point_is_found(points_.size() + outside_points.size(), false);
+        for (const auto &leaf : leaves) {
+            CHECK(leaf->points.size() == 1);
+            auto &p = leaf->points[0];
+            auto it =
+                std::find_if(points_.begin(), points_.end(), [q = &p](const Point<double> &pt) {
+                    return isClose(pt.x(), q->x()) && isClose(pt.y(), q->y()) &&
+                           isClose(pt.z(), q->z());
+                });
+            if (it != points_.end()) {
+                auto index = static_cast<std::size_t>(std::distance(points_.begin(), it));
+                CHECK(!point_is_found[index]);
+                point_is_found[index] = true;
+                continue;
+            }
+            it = std::find_if(outside_points.begin(), outside_points.end(),
+                              [q = &p](const Point<double> &pt) {
+                                  return isClose(pt.x(), q->x()) && isClose(pt.y(), q->y()) &&
+                                         isClose(pt.z(), q->z());
+                              });
+            REQUIRE(it != outside_points.end());
+            auto index = static_cast<std::size_t>(std::distance(outside_points.begin(), it)) +
+                         points_.size();
+            CHECK(!point_is_found[index]);
+            point_is_found[index] = true;
+        }
+    }
+}
 
-    const auto new_points = generateCube({5.0, 5.0, 5.0});
-    rec.set_time_sequence("frame", 2); // init frame
-    rec.log("points", rerun::Points3D(toRerunPositions(new_points)));
+TEST_CASE_FIXTURE(PointCloudTestFixture<double>, "overflowBuckets") {
+    tt::TentacleTree<Point<double>> tree(3, 0.01);
+    tree.insert(points_.begin(), points_.end());
+    tree.insert(points_.begin(), points_.end());
+    tree.insert(points_.begin(), points_.end());
 
-    tree.insert(new_points.begin(), new_points.end());
-    rec.set_time_sequence("frame", 3);
-    rec.log("boxes", toRerunBoxes(tree, rerun::Color(0, 0, 255)));
+    // const auto rec = rerun::RecordingStream("tentacle_tree_overflow_buckets");
+    // rec.spawn().exit_on_failure();
+    // rec.log("points", rerun::Points3D(toRerunPositions(points_)));
+    // rec.log("tree", toRerunBoxes(tree, rerun::Color(0, 0, 255)));
+
+    auto leaves = tt::impl::collectLeafNodes<Point<double>>(*tree.root());
+    REQUIRE(leaves.size() == 4 * 4 * 4);
+    for (const auto &leaf : leaves) {
+        CHECK(leaf->points.size() == 3);
+    }
+
+    // Insert more than the bucket size and check the leaves haven't changed
+    tree.insert(points_.begin(), points_.end());
+    leaves = tt::impl::collectLeafNodes<Point<double>>(*tree.root());
+    REQUIRE(leaves.size() == 4 * 4 * 4);
+    for (const auto &leaf : leaves) {
+        CHECK(leaf->points.size() == 3);
+    }
+}
+
+TEST_CASE_FIXTURE(PointCloudTestFixture<double>, "delete") {
+    {
+        // Delete everything
+        tt::TentacleTree<Point<double>> tree(1, 0.01);
+        tree.insert(points_.begin(), points_.end());
+
+        auto leaves = tt::impl::collectLeafNodes<Point<double>>(*tree.root());
+        REQUIRE(leaves.size() == 4 * 4 * 4);
+
+        tree.boxDelete({{-100, -100, -100}, {100, 100, 100}});
+        REQUIRE(tree.root() == nullptr);
+    }
+    {
+        // Delete nothing
+        tt::TentacleTree<Point<double>> tree(1, 0.01);
+        tree.insert(points_.begin(), points_.end());
+
+        auto leaves = tt::impl::collectLeafNodes<Point<double>>(*tree.root());
+        REQUIRE(leaves.size() == 4 * 4 * 4);
+
+        tree.boxDelete({{-100, -100, -100}, {-50, -50, -50}});
+        leaves = tt::impl::collectLeafNodes<Point<double>>(*tree.root());
+        REQUIRE(leaves.size() == 4 * 4 * 4);
+    }
+    {
+        // Delete half X
+        tt::TentacleTree<Point<double>> tree(1, 0.01);
+        tree.insert(points_.begin(), points_.end());
+        auto leaves = tt::impl::collectLeafNodes<Point<double>>(*tree.root());
+        REQUIRE(leaves.size() == 4 * 4 * 4);
+
+        // const auto rec = rerun::RecordingStream("tentacle_tree_box_delete");
+        // rec.spawn().exit_on_failure();
+        // rec.set_time_sequence("time", 0);
+        // rec.log("points", rerun::Points3D(toRerunPositions(tree)));
+        // rec.log("tree_before_delete", toRerunBoxes(tree, rerun::Color(255, 0, 0)));
+
+        tree.boxDelete({{-100, -100, -100}, {0, 100, 100}});
+        leaves = tt::impl::collectLeafNodes<Point<double>>(*tree.root());
+        REQUIRE(leaves.size() == 2 * 4 * 4);
+
+        for (const auto *leaf : leaves) {
+            for (const auto &p : leaf->points) {
+                CHECK(p.x() > 0.0);
+            }
+        }
+
+        // rec.set_time_sequence("time", 1);
+        // rec.log("points", rerun::Points3D(toRerunPositions(tree)));
+        // rec.log("tree_before_delete", toRerunBoxes(tree, rerun::Color(255, 0, 0)));
+    }
+    {
+        // Delete half Y
+        tt::TentacleTree<Point<double>> tree(1, 0.01);
+        tree.insert(points_.begin(), points_.end());
+        auto leaves = tt::impl::collectLeafNodes<Point<double>>(*tree.root());
+        REQUIRE(leaves.size() == 4 * 4 * 4);
+
+        tree.boxDelete({{-100, -100, -100}, {100, 0, 100}});
+        leaves = tt::impl::collectLeafNodes<Point<double>>(*tree.root());
+        REQUIRE(leaves.size() == 2 * 4 * 4);
+
+        for (const auto *leaf : leaves) {
+            for (const auto &p : leaf->points) {
+                CHECK(p.y() > 0.0);
+            }
+        }
+    }
+    {
+        // Delete half Z
+        tt::TentacleTree<Point<double>> tree(1, 0.01);
+        tree.insert(points_.begin(), points_.end());
+        auto leaves = tt::impl::collectLeafNodes<Point<double>>(*tree.root());
+        REQUIRE(leaves.size() == 4 * 4 * 4);
+
+        tree.boxDelete({{-100, -100, -100}, {100, 100, 0}});
+        leaves = tt::impl::collectLeafNodes<Point<double>>(*tree.root());
+        REQUIRE(leaves.size() == 2 * 4 * 4);
+
+        for (const auto *leaf : leaves) {
+            for (const auto &p : leaf->points) {
+                CHECK(p.z() > 0.0);
+            }
+        }
+    }
+    {
+        // Delete inside points (keep only boundary)
+        tt::TentacleTree<Point<double>> tree(1, 0.01);
+        tree.insert(points_.begin(), points_.end());
+        auto leaves = tt::impl::collectLeafNodes<Point<double>>(*tree.root());
+        REQUIRE(leaves.size() == 4 * 4 * 4);
+
+        // const auto rec = rerun::RecordingStream("tentacle_tree_delete_inside");
+        // rec.spawn().exit_on_failure();
+        // rec.set_time_sequence("frame", 0);
+        // rec.log("points", rerun::Points3D(toRerunPositions(tree)));
+        // rec.log("tree", toRerunBoxes(tree, rerun::Color(255, 0, 0)));
+
+        // The cube is from -1.0 to 1.0 in each axis, spacing is 2/3
+        // So boundary points are those with at least one coordinate == -1.0 or 1.0
+        double min = -1.0, max = 1.0, eps = 1e-6;
+        tree.boxDelete({{min + eps, min + eps, min + eps}, {max - eps, max - eps, max - eps}});
+        leaves = tt::impl::collectLeafNodes<Point<double>>(*tree.root());
+
+        // rec.set_time_sequence("frame", 1);
+        // rec.log("points", rerun::Points3D(toRerunPositions(tree)));
+        // rec.log("tree", toRerunBoxes(tree, rerun::Color(0, 255, 0)));
+
+        // After deletion, all remaining points must have at least one coordinate == min or max
+        std::size_t boundary_count = 0;
+        for (const auto *leaf : leaves) {
+            for (const auto &p : leaf->points) {
+                bool on_boundary = (std::abs(p.x() - min) < eps) || (std::abs(p.x() - max) < eps) ||
+                                   (std::abs(p.y() - min) < eps) || (std::abs(p.y() - max) < eps) ||
+                                   (std::abs(p.z() - min) < eps) || (std::abs(p.z() - max) < eps);
+                CHECK(on_boundary);
+                boundary_count++;
+            }
+        }
+        // There are 56 boundary points in a 4x4x4 cube (cube minus 2x2x2 inside = 64-8=56)
+        CHECK(boundary_count == 56);
+    }
+    {
+        // Delete inner points in a column through the cube
+        tt::TentacleTree<Point<double>> tree(1, 0.01);
+        tree.insert(points_.begin(), points_.end());
+        auto leaves = tt::impl::collectLeafNodes<Point<double>>(*tree.root());
+        REQUIRE(leaves.size() == 4 * 4 * 4);
+
+        // const auto rec = rerun::RecordingStream("tentacle_tree_delete_inside");
+        // rec.spawn().exit_on_failure();
+        // rec.set_time_sequence("frame", 0);
+        // rec.log("points", rerun::Points3D(toRerunPositions(tree)));
+        // rec.log("tree", toRerunBoxes(tree, rerun::Color(255, 0, 0)));
+
+        tree.boxDelete({{-0.5, -0.5, -100}, {0.5, 0.5, 100}});
+        leaves = tt::impl::collectLeafNodes<Point<double>>(*tree.root());
+        REQUIRE(leaves.size() == (4 * 3) * 4);
+
+        // rec.set_time_sequence("frame", 1);
+        // rec.log("points", rerun::Points3D(toRerunPositions(tree)));
+        // rec.log("tree", toRerunBoxes(tree, rerun::Color(0, 255, 0)));
+    }
 }
 
 TEST_CASE("isBoxInNode") {
@@ -569,7 +827,7 @@ TEST_CASE("isBoxInNode") {
     node.center = {0.0f, 0.0f, 0.0f};
     node.half_extent = 1.0f;
 
-    using BBoxF = tt::impl::BoundingBox<float>;
+    using BBoxF = tt::BoundingBox<float>;
 
     // Fully inside
     BBoxF inside;
@@ -583,13 +841,13 @@ TEST_CASE("isBoxInNode") {
     outside.max_coords = {3.0f, 3.0f, 3.0f};
     CHECK(!tt::impl::isBoxInNode<Point<float>>(outside, node));
 
-    // Touching at face (min == node_max on x) -> considered overlapping by implementation
+    // Touching at face (min == node_max on x)
     BBoxF touching;
     touching.min_coords = {1.0f, -0.5f, -0.5f};
     touching.max_coords = {2.0f, 0.5f, 0.5f};
-    CHECK(tt::impl::isBoxInNode<Point<float>>(touching, node));
+    CHECK(!tt::impl::isBoxInNode<Point<float>>(touching, node));
 
-    // Barely outside (just beyond node_max) -> should be false
+    // Barely outside (just beyond node_max)
     BBoxF barely_out;
     barely_out.min_coords = {1.0001f, -0.5f, -0.5f};
     barely_out.max_coords = {2.0f, 0.5f, 0.5f};
@@ -599,11 +857,668 @@ TEST_CASE("isBoxInNode") {
     BBoxF overlap;
     overlap.min_coords = {0.5f, 0.5f, 0.5f};
     overlap.max_coords = {1.5f, 1.5f, 1.5f};
-    CHECK(tt::impl::isBoxInNode<Point<float>>(overlap, node));
+    CHECK(!tt::impl::isBoxInNode<Point<float>>(overlap, node));
 
-    // Overlaps in x/y but separated in z -> should be false
+    // Overlaps in x/y but separated in z
     BBoxF sep_z;
     sep_z.min_coords = {0.5f, 0.5f, 2.0f};
     sep_z.max_coords = {1.5f, 1.5f, 3.0f};
     CHECK(!tt::impl::isBoxInNode<Point<float>>(sep_z, node));
+}
+
+TEST_CASE("pointInNode") {
+    tt::Node<Point<float>> node;
+    node.center = {10.0f, -1.0f, 1.0f};
+    node.half_extent = 1.0f;
+
+    CHECK(tt::impl::isPointInNode({10.1f, -1.1f, 1.1f}, node));
+    CHECK(tt::impl::isPointInNode({9.9f, -0.9f, 0.9f}, node));
+    CHECK(!tt::impl::isPointInNode({16.0f, -1.0f, 1.0f}, node));
+    CHECK(!tt::impl::isPointInNode({10.0f, -4.0f, 1.0f}, node));
+    CHECK(!tt::impl::isPointInNode({10.0f, -1.0f, 3.0f}, node));
+    CHECK(!tt::impl::isPointInNode({123.0f, 123.0f, 123.0f}, node));
+}
+
+TEST_CASE("isSphereInNode") {
+    // Node centered at origin with half-extent 1.0
+    // This node spans from (-1, -1, -1) to (1, 1, 1)
+    tt::Node<Point<float>> node;
+    node.center = {0.0f, 0.0f, 0.0f};
+    node.half_extent = 1.0f;
+
+    SUBCASE("Sphere fully inside node - centered") {
+        Point<float> sphere_center{{0.0f, 0.0f, 0.0f}};
+        // Sphere with radius 0.5 centered at origin is fully inside the node
+        float sphere_radius = 0.5f;
+        CHECK(tt::impl::isSphereInNode(node, sphere_center, sphere_radius));
+    }
+
+    SUBCASE("Sphere fully inside node - small radius") {
+        Point<float> sphere_center{{0.0f, 0.0f, 0.0f}};
+        // Very small sphere is definitely inside
+        float sphere_radius = 0.1f;
+        CHECK(tt::impl::isSphereInNode(node, sphere_center, sphere_radius));
+    }
+
+    SUBCASE("Sphere too large - extends beyond node") {
+        Point<float> sphere_center{{0.0f, 0.0f, 0.0f}};
+        // Sphere with radius 1.5 extends beyond the node
+        float sphere_radius = 1.5f;
+        CHECK_FALSE(tt::impl::isSphereInNode(node, sphere_center, sphere_radius));
+    }
+
+    SUBCASE("Sphere exactly fits - touching all faces") {
+        Point<float> sphere_center{{0.0f, 0.0f, 0.0f}};
+        // Sphere with radius 1.0 exactly touches all faces
+        float sphere_radius = 1.0f;
+        CHECK(tt::impl::isSphereInNode(node, sphere_center, sphere_radius));
+    }
+
+    SUBCASE("Sphere center offset - still inside") {
+        Point<float> sphere_center{{0.5f, 0.0f, 0.0f}};
+        // Sphere centered at x=0.5 with radius 0.5 touches the max face but doesn't extend beyond
+        float sphere_radius = 0.5f;
+        CHECK(tt::impl::isSphereInNode(node, sphere_center, sphere_radius));
+    }
+
+    SUBCASE("Sphere center offset - extends beyond") {
+        Point<float> sphere_center{{0.5f, 0.0f, 0.0f}};
+        // Sphere centered at x=0.5 with radius 0.6 extends beyond the max face
+        float sphere_radius = 0.6f;
+        CHECK_FALSE(tt::impl::isSphereInNode(node, sphere_center, sphere_radius));
+    }
+
+    SUBCASE("Sphere center at node corner - extends beyond") {
+        Point<float> sphere_center{{1.0f, 1.0f, 1.0f}};
+        // Any sphere at a corner will extend beyond the node
+        float sphere_radius = 0.1f;
+        CHECK_FALSE(tt::impl::isSphereInNode(node, sphere_center, sphere_radius));
+    }
+
+    SUBCASE("Sphere center near boundary - barely fits") {
+        Point<float> sphere_center{{0.8f, 0.0f, 0.0f}};
+        // Sphere with radius 0.2 centered at x=0.8 just fits (0.8 + 0.2 = 1.0)
+        float sphere_radius = 0.2f;
+        CHECK(tt::impl::isSphereInNode(node, sphere_center, sphere_radius));
+    }
+
+    SUBCASE("Sphere center near boundary - slightly too large") {
+        Point<float> sphere_center{{0.8f, 0.0f, 0.0f}};
+        // Sphere with radius 0.21 extends beyond (0.8 + 0.21 = 1.01 > 1.0)
+        float sphere_radius = 0.21f;
+        CHECK_FALSE(tt::impl::isSphereInNode(node, sphere_center, sphere_radius));
+    }
+
+    SUBCASE("Sphere center outside node") {
+        Point<float> sphere_center{{2.0f, 0.0f, 0.0f}};
+        // Sphere center is outside the node
+        float sphere_radius = 0.5f;
+        CHECK_FALSE(tt::impl::isSphereInNode(node, sphere_center, sphere_radius));
+    }
+
+    SUBCASE("Zero radius sphere - always inside if center is inside") {
+        Point<float> sphere_center{{0.0f, 0.0f, 0.0f}};
+        float sphere_radius = 0.0f;
+        CHECK(tt::impl::isSphereInNode(node, sphere_center, sphere_radius));
+    }
+
+    SUBCASE("Zero radius sphere - outside if center is outside") {
+        Point<float> sphere_center{{1.5f, 0.0f, 0.0f}};
+        float sphere_radius = 0.0f;
+        CHECK_FALSE(tt::impl::isSphereInNode(node, sphere_center, sphere_radius));
+    }
+
+    SUBCASE("Different coordinate types - double") {
+        tt::Node<Point<double>> node_d;
+        node_d.center = {0.0, 0.0, 0.0};
+        node_d.half_extent = 1.0;
+
+        Point<double> sphere_center{{0.0, 0.0, 0.0}};
+        double sphere_radius = 0.5;
+        CHECK(tt::impl::isSphereInNode(node_d, sphere_center, sphere_radius));
+    }
+
+    SUBCASE("Asymmetric sphere position - all axes") {
+        // Node: center=(0,0,0), half_extent=1.0, so bounds are [-1, 1] on all axes
+        // Test 1: Sphere that clearly fits
+        Point<float> sphere_center{{0.0f, -0.5f, 0.0f}};
+        float sphere_radius = 0.4f;
+        // y-axis check: center=-0.5, radius=0.4
+        //   sphere_min = -0.5 - 0.4 = -0.9 (>= -1.0) ✓
+        //   sphere_max = -0.5 + 0.4 = -0.1 (<= 1.0) ✓
+        CHECK(tt::impl::isSphereInNode(node, sphere_center, sphere_radius));
+
+        // Test 2: Sphere that exactly touches max boundary on y-axis
+        sphere_center = {{0.0f, 0.3f, 0.0f}};
+        sphere_radius = 0.7f;
+        // y-axis check: center=0.3, radius=0.7
+        //   sphere_min = 0.3 - 0.7 = -0.4 (>= -1.0) ✓
+        //   sphere_max = 0.3 + 0.7 =  1.0 (<= 1.0) ✓ (exactly touches)
+        CHECK(tt::impl::isSphereInNode(node, sphere_center, sphere_radius));
+
+        // Test 3: Sphere that extends beyond max boundary on y-axis
+        sphere_center = {{0.0f, 0.3f, 0.0f}};
+        sphere_radius = 0.71f;
+        // y-axis check: center=0.3, radius=0.71
+        //   sphere_min = 0.3 - 0.71 = -0.41 (>= -1.0) ✓
+        //   sphere_max = 0.3 + 0.71 =  1.01 (> 1.0) ✗ (extends beyond!)
+        CHECK_FALSE(tt::impl::isSphereInNode(node, sphere_center, sphere_radius));
+
+        // Test 4: Sphere that extends beyond max on x and z but fits on y
+        sphere_center = {{0.9f, 0.0f, 0.9f}};
+        sphere_radius = 0.2f;
+        // x-axis check: center=0.9, radius=0.2
+        //   sphere_min = 0.9 - 0.2 = 0.7 (>= -1.0) ✓
+        //   sphere_max = 0.9 + 0.2 = 1.1 (> 1.0) ✗ (extends beyond!)
+        CHECK_FALSE(tt::impl::isSphereInNode(node, sphere_center, sphere_radius));
+    }
+
+    SUBCASE("Large node - small sphere") {
+        tt::Node<Point<float>> large_node;
+        large_node.center = {0.0f, 0.0f, 0.0f};
+        large_node.half_extent = 10.0f;
+
+        Point<float> sphere_center{{0.0f, 0.0f, 0.0f}};
+        float sphere_radius = 5.0f;
+        CHECK(tt::impl::isSphereInNode(large_node, sphere_center, sphere_radius));
+    }
+}
+
+TEST_CASE("isBoxOverlappingNode") {
+    tt::Node<Point<float>> node;
+    node.center = {0.0f, 0.0f, 0.0f};
+    node.half_extent = 1.0f;
+
+    using BBoxF = tt::BoundingBox<float>;
+
+    // Fully inside
+    BBoxF inside;
+    inside.min_coords = {-0.5f, -0.5f, -0.5f};
+    inside.max_coords = {0.5f, 0.5f, 0.5f};
+    CHECK(tt::impl::isBoxOverlappingNode<Point<float>>(inside, node));
+
+    // Fully outside (disjoint)
+    BBoxF outside;
+    outside.min_coords = {2.0f, 2.0f, 2.0f};
+    outside.max_coords = {3.0f, 3.0f, 3.0f};
+    CHECK(!tt::impl::isBoxOverlappingNode<Point<float>>(outside, node));
+
+    // Touching at face (min == node_max on x)
+    BBoxF touching;
+    touching.min_coords = {1.0f, -0.5f, -0.5f};
+    touching.max_coords = {2.0f, 0.5f, 0.5f};
+    CHECK(tt::impl::isBoxOverlappingNode<Point<float>>(touching, node));
+
+    // Barely outside (just beyond node_max)
+    BBoxF barely_out;
+    barely_out.min_coords = {1.0001f, -0.5f, -0.5f};
+    barely_out.max_coords = {2.0f, 0.5f, 0.5f};
+    CHECK(!tt::impl::isBoxOverlappingNode<Point<float>>(barely_out, node));
+
+    // Overlapping partially
+    BBoxF overlap;
+    overlap.min_coords = {0.5f, 0.5f, 0.5f};
+    overlap.max_coords = {1.5f, 1.5f, 1.5f};
+    CHECK(tt::impl::isBoxOverlappingNode<Point<float>>(overlap, node));
+
+    // Overlaps in x/y but separated in z
+    BBoxF sep_z;
+    sep_z.min_coords = {0.5f, 0.5f, 2.0f};
+    sep_z.max_coords = {1.5f, 1.5f, 3.0f};
+    CHECK(!tt::impl::isBoxOverlappingNode<Point<float>>(sep_z, node));
+
+    // Enclosing node
+    BBoxF enclosing;
+    enclosing.min_coords = {-2.0f, -2.0f, -2.0f};
+    enclosing.max_coords = {2.0f, 2.0f, 2.0f};
+    CHECK(tt::impl::isBoxOverlappingNode<Point<float>>(enclosing, node));
+}
+
+TEST_CASE("computeParentCenter") {
+    tt::Node<Point<float>> node;
+    node.center = {0.0f, 0.0f, 0.0f};
+    node.half_extent = 1.0f;
+
+    {
+        const tt::Array3f target = {2.0f, 2.0f, 2.0f};
+        const auto new_center = tt::impl::computeParentCenter(node, target);
+        CHECK(new_center[0] == doctest::Approx(1.f));
+        CHECK(new_center[1] == doctest::Approx(1.f));
+        CHECK(new_center[2] == doctest::Approx(1.f));
+    }
+    {
+        const tt::Array3f target = {100.0f, 300.0f, 200.0f};
+        const auto new_center = tt::impl::computeParentCenter(node, target);
+        CHECK(new_center[0] == doctest::Approx(1.f));
+        CHECK(new_center[1] == doctest::Approx(1.f));
+        CHECK(new_center[2] == doctest::Approx(1.f));
+    }
+    {
+        const tt::Array3f target = {-100.0f, -300.0f, -200.0f};
+        const auto new_center = tt::impl::computeParentCenter(node, target);
+        CHECK(new_center[0] == doctest::Approx(-1.f));
+        CHECK(new_center[1] == doctest::Approx(-1.f));
+        CHECK(new_center[2] == doctest::Approx(-1.f));
+    }
+    {
+        const tt::Array3f target = {100.0f, -300.0f, 200.0f};
+        const auto new_center = tt::impl::computeParentCenter(node, target);
+        CHECK(new_center[0] == doctest::Approx(1.f));
+        CHECK(new_center[1] == doctest::Approx(-1.f));
+        CHECK(new_center[2] == doctest::Approx(1.f));
+    }
+}
+
+TEST_CASE("makeParentAndLinkNode") {
+    {
+        auto node = std::make_unique<tt::Node<Point<float>>>();
+        node->center = {0.0f, 0.0f, 0.0f};
+        node->half_extent = 1.0f;
+
+        auto parent = tt::impl::makeParentAndLinkNode(std::move(node), {10.0f, 10.0f, 10.0f});
+        CHECK(parent->center[0] == doctest::Approx(1.0f));
+        CHECK(parent->center[1] == doctest::Approx(1.0f));
+        CHECK(parent->center[2] == doctest::Approx(1.0f));
+        CHECK(parent->half_extent == doctest::Approx(2.0f));
+
+        auto count = std::count_if(parent->children.begin(), parent->children.end(),
+                                   [](const auto &child) { return child != nullptr; });
+        CHECK(count == 1);
+
+        auto child = std::find_if(parent->children.begin(), parent->children.end(),
+                                  [](const auto &child) { return child != nullptr; });
+        CHECK(child != parent->children.end());
+        CHECK((*child)->center[0] == doctest::Approx(0.0f));
+        CHECK((*child)->center[1] == doctest::Approx(0.0f));
+        CHECK((*child)->center[2] == doctest::Approx(0.0f));
+        CHECK((*child)->half_extent == doctest::Approx(1.0f));
+    }
+    {
+        auto node = std::make_unique<tt::Node<Point<float>>>();
+        node->center = {1.0f, 1.0f, 1.0f};
+        node->half_extent = 0.1f;
+
+        auto parent = tt::impl::makeParentAndLinkNode(std::move(node), {-10.0f, -10.0f, -10.0f});
+        CHECK(parent->center[0] == doctest::Approx(0.9f));
+        CHECK(parent->center[1] == doctest::Approx(0.9f));
+        CHECK(parent->center[2] == doctest::Approx(0.9f));
+        CHECK(parent->half_extent == doctest::Approx(.2f));
+
+        auto count = std::count_if(parent->children.begin(), parent->children.end(),
+                                   [](const auto &child) { return child != nullptr; });
+        CHECK(count == 1);
+
+        auto child = std::find_if(parent->children.begin(), parent->children.end(),
+                                  [](const auto &child) { return child != nullptr; });
+        CHECK(child != parent->children.end());
+        CHECK((*child)->center[0] == doctest::Approx(1.0f));
+        CHECK((*child)->center[1] == doctest::Approx(1.0f));
+        CHECK((*child)->center[2] == doctest::Approx(1.0f));
+        CHECK((*child)->half_extent == doctest::Approx(.1f));
+    }
+}
+
+TEST_CASE("growTreeUntilAbsorption") {
+    {
+        // Grow Positive
+        auto node = std::make_unique<tt::Node<Point<float>>>();
+        node->center = {0.0f, 0.0f, 0.0f};
+        node->half_extent = 0.5f;
+
+        // const auto rec = rerun::RecordingStream("growTreeUntilAbsorption");
+        // rec.spawn().exit_on_failure();
+        //
+        // rec.set_time_sequence("frame", 0);
+        // rec.log("boxes", toRerunBoxes(*node));
+
+        tt::BoundingBox<float> bbox{{9.5f, 9.5f, 9.5f}, {10.5f, 10.5f, 10.0f}};
+        auto root = tt::impl::growTreeUntilAbsorption(std::move(node), bbox);
+
+        // rec.set_time_sequence("frame", 1);
+        // rec.log("boxes", toRerunBoxes(bbox, rerun::Color(0, 255, 0)));
+        // rec.set_time_sequence("frame", 2);
+        // rec.log("boxes", toRerunBoxes(*root, rerun::Color(0, 255, 255)));
+
+        CHECK(tt::impl::isBoxInNode(bbox, *root));
+    }
+    {
+        // Grow negative
+        auto node = std::make_unique<tt::Node<Point<float>>>();
+        node->center = {1.0f, 2.0f, 3.0f};
+        node->half_extent = 0.5f;
+
+        tt::BoundingBox<float> bbox{{-6.f, -6.f, -6.f}, {-3.f, -4.f, -5.f}};
+        auto root = tt::impl::growTreeUntilAbsorption(std::move(node), bbox);
+
+        CHECK(tt::impl::isBoxInNode(bbox, *root));
+
+        // const auto rec = rerun::RecordingStream("growTreeUntilAbsorption");
+        // rec.spawn().exit_on_failure();
+        // rec.set_time_sequence("frame", 0);
+        // rec.log("boxes", toRerunBoxes(bbox, rerun::Color(0, 255, 0)));
+        // rec.set_time_sequence("frame", 1);
+        // rec.log("boxes", toRerunBoxes(*root, rerun::Color(0, 255, 255)));
+    }
+    {
+        // Grow all directions
+        auto node = std::make_unique<tt::Node<Point<float>>>();
+        node->center = {1.0f, 2.0f, 3.0f};
+        node->half_extent = 0.5f;
+
+        tt::BoundingBox<float> bbox{{-100.f, -100.f, -100.f}, {100.f, 100.f, 100.f}};
+        auto root = tt::impl::growTreeUntilAbsorption(std::move(node), bbox);
+        CHECK(tt::impl::isBoxInNode(bbox, *root));
+        //
+        // const auto rec = rerun::RecordingStream("growTreeUntilAbsorption");
+        // rec.spawn().exit_on_failure();
+        // rec.set_time_sequence("frame", 0);
+        // rec.log("boxes", toRerunBoxes(bbox, rerun::Color(0, 255, 0)));
+        // rec.set_time_sequence("frame", 1);
+        // rec.log("boxes", toRerunBoxes(*root, rerun::Color(0, 255, 255)));
+    }
+}
+
+TEST_CASE("findClosestLeafNode") {
+    constexpr float kMinExtent = 0.01f;
+    {
+        tt::TentacleTree<Point<float>> tree(2, kMinExtent);
+        std::vector<Point<float>> points;
+        points.push_back({0, 0, 0});
+        tree.insert(points.begin(), points.end());
+
+        auto &leaf = tt::impl::findClosestLeafNode(*tree.root(), {0.1f, 0.1f, 0.1f}, kMinExtent);
+
+        // There can only be one leaf here and it's the one with the only point
+        REQUIRE(leaf.points.size() == 1);
+        for (const auto &c : leaf.children) {
+            REQUIRE(c == nullptr);
+        }
+        REQUIRE(leaf.center[0] == doctest::Approx(0.0f));
+        REQUIRE(leaf.center[1] == doctest::Approx(0.0f));
+        REQUIRE(leaf.center[2] == doctest::Approx(0.0f));
+
+        // If we change the query we should still get the same leaf because there's only one leaf
+        auto &other_leaf =
+            tt::impl::findClosestLeafNode(*tree.root(), {100.f, 222.1f, 444.1f}, kMinExtent);
+        REQUIRE(leaf.points.size() == 1);
+        for (const auto &c : leaf.children) {
+            REQUIRE(c == nullptr);
+        }
+        REQUIRE(leaf.center[0] == doctest::Approx(0.0f));
+        REQUIRE(leaf.center[1] == doctest::Approx(0.0f));
+        REQUIRE(leaf.center[2] == doctest::Approx(0.0f));
+    }
+    {
+        tt::TentacleTree<Point<float>> tree(2, kMinExtent);
+        std::vector<Point<float>> points;
+        points.push_back({5, 5, 5});
+        tree.insert(points.begin(), points.end());
+
+        const auto &leaf =
+            tt::impl::findClosestLeafNode(*tree.root(), {-220.1f, -230.1f, 100.1f}, kMinExtent);
+
+        // There can only be one leaf here and it's the one with the only point
+        REQUIRE(leaf.points.size() == 1);
+        for (const auto &c : leaf.children) {
+            REQUIRE(c == nullptr);
+        }
+        REQUIRE(leaf.center[0] == doctest::Approx(5.0f));
+        REQUIRE(leaf.center[1] == doctest::Approx(5.0f));
+        REQUIRE(leaf.center[2] == doctest::Approx(5.0f));
+    }
+    {
+        tt::TentacleTree<Point<float>> tree(2, kMinExtent);
+        std::vector<Point<float>> points{{-10, -10, -10}, {10, 10, 10}};
+        tree.insert(points.begin(), points.end());
+        tree.insert(points.begin(), points.end());
+        const auto &leaf =
+            tt::impl::findClosestLeafNode(*tree.root(), {-1.0f, -1.0f, 0.0f}, kMinExtent);
+
+        // const auto rec = rerun::RecordingStream("tentacle_tree_find_closest_leaf");
+        // rec.spawn().exit_on_failure();
+        // rec.log("points", rerun::Points3D(toRerunPositions(tree)));
+        // rec.log("tree", toRerunBoxes(tree, rerun::Color(0, 0, 255)));
+
+        REQUIRE(leaf.points.size() == 2);
+        REQUIRE(leaf.points[0].x() == doctest::Approx(-10.0f));
+        REQUIRE(leaf.points[0].y() == doctest::Approx(-10.0f));
+        REQUIRE(leaf.points[0].z() == doctest::Approx(-10.0f));
+    }
+}
+
+TEST_CASE_FIXTURE(PointCloudTestFixture<float>, "knnSearch") {
+    using PointF = Point<float>;
+    SUBCASE("All in first leaf") {
+        tt::TentacleTree<PointF> tree(4, 0.01f);
+        tree.insert(points_.begin(), points_.end());
+        tree.insert(points_.begin(), points_.end());
+        tree.insert(points_.begin(), points_.end());
+        tree.insert(points_.begin(), points_.end());
+
+        const PointF query_point{{10.0f, 10.0f, 10.0f}};
+        constexpr std::size_t k = 4;
+        auto neighbors = tree.knnSearch(query_point, k);
+        REQUIRE(neighbors.size() == k);
+        for (const auto &neighbor : neighbors) {
+            REQUIRE(neighbor.point.get().x() == doctest::Approx(1.0f));
+            REQUIRE(neighbor.point.get().y() == doctest::Approx(1.0f));
+            REQUIRE(neighbor.point.get().z() == doctest::Approx(1.0f));
+        }
+    }
+    SUBCASE("More points in leaf than k") {
+        tt::TentacleTree<PointF> tree(4, 0.01f);
+        tree.insert(points_.begin(), points_.end());
+        tree.insert(points_.begin(), points_.end());
+        tree.insert(points_.begin(), points_.end());
+        tree.insert(points_.begin(), points_.end());
+
+        const PointF query_point{{0.0f, 0.0f, 0.0f}};
+        constexpr std::size_t k = 3;
+        auto neighbors = tree.knnSearch(query_point, k);
+        REQUIRE(neighbors.size() == k);
+        for (const auto &neighbor : neighbors) {
+            REQUIRE(neighbor.point.get().x() == doctest::Approx(1.0f));
+            REQUIRE(neighbor.point.get().y() == doctest::Approx(1.0f));
+            REQUIRE(neighbor.point.get().z() == doctest::Approx(1.0f));
+        }
+    }
+}
+
+TEST_CASE("BoundedPriorityQueue::push") {
+    SUBCASE("Basic push when queue is not full (max-heap)") {
+        tt::impl::BoundedPriorityQueue<int> pq(std::less<int>{}, 3);
+
+        CHECK(pq.empty());
+        CHECK(pq.size() == 0);
+        CHECK_FALSE(pq.isFull());
+
+        pq.push(5);
+        CHECK(pq.size() == 1);
+        CHECK(pq.top() == 5);
+        CHECK_FALSE(pq.isFull());
+
+        pq.push(3);
+        CHECK(pq.size() == 2);
+        CHECK(pq.top() == 5); // max-heap, so 5 is at top
+        CHECK_FALSE(pq.isFull());
+
+        pq.push(7);
+        CHECK(pq.size() == 3);
+        CHECK(pq.top() == 7); // 7 is now the largest
+        CHECK(pq.isFull());
+    }
+
+    SUBCASE("Bounded behavior: pushing better element when full") {
+        tt::impl::BoundedPriorityQueue<int> pq(std::less<int>{}, 3);
+
+        pq.push(10);
+        pq.push(20);
+        pq.push(30);
+        CHECK(pq.isFull());
+        CHECK(pq.top() == 30); // largest element
+
+        // Push a smaller (better) element - should replace 30
+        pq.push(5);
+        CHECK(pq.size() == 3);
+        CHECK(pq.top() == 20); // 30 was removed, now 20 is largest
+    }
+
+    SUBCASE("Bounded behavior: pushing worse element when full") {
+        tt::impl::BoundedPriorityQueue<int> pq(std::less<int>{}, 3);
+
+        pq.push(10);
+        pq.push(20);
+        pq.push(30);
+        CHECK(pq.top() == 30);
+
+        // Push a larger (worse) element - should be rejected
+        pq.push(40);
+        CHECK(pq.size() == 3);
+        CHECK(pq.top() == 30); // unchanged
+    }
+
+    SUBCASE("Min-heap behavior with std::greater") {
+        tt::impl::BoundedPriorityQueue<double, std::greater<double>> pq(std::greater<double>{}, 3);
+
+        pq.push(10.0);
+        pq.push(5.0);
+        pq.push(15.0);
+        CHECK(pq.isFull());
+        CHECK(pq.top() == doctest::Approx(5.0)); // min-heap, smallest at top
+
+        // Push a larger (better for k-NN) element - should replace 5.0
+        pq.push(20.0);
+        CHECK(pq.size() == 3);
+        CHECK(pq.top() == doctest::Approx(10.0)); // 5.0 was removed
+    }
+
+    SUBCASE("Custom comparator for pairs") {
+        using DistIndexPair = std::pair<double, int>;
+        auto comp = [](const DistIndexPair &a, const DistIndexPair &b) {
+            return a.first < b.first; // max-heap by distance
+        };
+
+        tt::impl::BoundedPriorityQueue<DistIndexPair, decltype(comp)> pq(comp, 3);
+
+        pq.push({1.5, 0});
+        pq.push({2.5, 1});
+        pq.push({0.5, 2});
+
+        CHECK(pq.isFull());
+        CHECK(pq.top().first == doctest::Approx(2.5)); // largest distance
+        CHECK(pq.top().second == 1);
+
+        // Push closer point - should replace furthest
+        pq.push({0.3, 3});
+        CHECK(pq.size() == 3);
+        CHECK(pq.top().first == doctest::Approx(1.5)); // 2.5 was removed
+    }
+
+    SUBCASE("Edge case: max_size = 1") {
+        tt::impl::BoundedPriorityQueue<int> pq(std::less<int>{}, 1);
+
+        pq.push(10);
+        CHECK(pq.isFull());
+        CHECK(pq.top() == 10);
+
+        pq.push(5); // better
+        CHECK(pq.size() == 1);
+        CHECK(pq.top() == 5);
+
+        pq.push(20); // worse
+        CHECK(pq.size() == 1);
+        CHECK(pq.top() == 5); // unchanged
+    }
+
+    SUBCASE("Float values with proper comparison") {
+        tt::impl::BoundedPriorityQueue<float> pq(std::less<float>{}, 2);
+
+        pq.push(3.14f);
+        pq.push(2.71f);
+        CHECK(pq.isFull());
+        CHECK(pq.top() == doctest::Approx(3.14f));
+
+        pq.push(1.41f); // smaller, should replace 3.14
+        CHECK(pq.size() == 2);
+        CHECK(pq.top() == doctest::Approx(2.71f));
+    }
+
+    SUBCASE("Sequential pushes maintaining heap property") {
+        tt::impl::BoundedPriorityQueue<int> pq(std::less<int>{}, 5);
+
+        // Push elements in various orders
+        pq.push(50);
+        CHECK(pq.top() == 50);
+
+        pq.push(30);
+        CHECK(pq.top() == 50);
+
+        pq.push(70);
+        CHECK(pq.top() == 70);
+
+        pq.push(20);
+        CHECK(pq.top() == 70);
+
+        pq.push(60);
+        CHECK(pq.top() == 70);
+        CHECK(pq.isFull());
+
+        // Now it's full, push smaller values
+        pq.push(10);
+        CHECK(pq.top() == 60); // 70 removed
+
+        pq.push(5);
+        CHECK(pq.top() == 50); // 60 removed
+    }
+
+    SUBCASE("KnnResult with max-heap for k-NN search") {
+        // Create test points with different coordinates
+        std::vector<Point<float>> points = {{{1.0f, 2.0f, 3.0f}},
+                                            {{4.0f, 5.0f, 6.0f}},
+                                            {{7.0f, 8.0f, 9.0f}},
+                                            {{0.5f, 0.5f, 0.5f}},
+                                            {{10.0f, 10.0f, 10.0f}}};
+
+        // Create KnnResults with different distances
+        std::vector<tt::KnnResult<Point<float>>> results = {{std::ref(points[0]), 5.0f},
+                                                            {std::ref(points[1]), 10.0f},
+                                                            {std::ref(points[2]), 15.0f},
+                                                            {std::ref(points[3]), 2.0f},
+                                                            {std::ref(points[4]), 20.0f}};
+
+        // For k-NN, we want to keep k closest points, so use max-heap
+        // Top will be the furthest among the k closest
+        tt::impl::BoundedPriorityQueue<tt::KnnResult<Point<float>>> pq(
+            std::less<tt::KnnResult<Point<float>>>{}, 3);
+
+        CHECK(pq.empty());
+
+        // Push first 3 results
+        pq.push(results[0]); // distance 5.0
+        CHECK(pq.size() == 1);
+        CHECK(pq.top().distance == doctest::Approx(5.0f));
+
+        pq.push(results[1]); // distance 10.0
+        CHECK(pq.size() == 2);
+        CHECK(pq.top().distance == doctest::Approx(10.0f)); // max of (5, 10)
+
+        pq.push(results[2]); // distance 15.0
+        CHECK(pq.size() == 3);
+        CHECK(pq.isFull());
+        CHECK(pq.top().distance == doctest::Approx(15.0f)); // max of (5, 10, 15)
+
+        // Now queue is full with distances: 5, 10, 15
+        // Push a closer point (distance 2.0) - should replace furthest (15.0)
+        pq.push(results[3]);
+        CHECK(pq.size() == 3);
+        CHECK(pq.top().distance == doctest::Approx(10.0f)); // max of (2, 5, 10)
+
+        // Push a further point (distance 20.0) - should be rejected
+        pq.push(results[4]);
+        CHECK(pq.size() == 3);
+        CHECK(pq.top().distance == doctest::Approx(10.0f)); // unchanged
+
+        // Verify the point reference is correctly stored
+        CHECK(&pq.top().point.get() == &points[1]); // Top is results[1] (distance 10.0)
+    }
 }

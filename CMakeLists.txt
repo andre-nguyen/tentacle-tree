@@ -32,6 +32,7 @@ set(COMPILE_OPTIONS
 
 add_library(tentacle-tree
     src/tentacle_tree.cpp
+        include/tt/impl/bounded_priority_queue.hpp
 )
 
 target_include_directories(tentacle-tree

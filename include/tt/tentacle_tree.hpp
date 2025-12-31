@@ -8,6 +8,8 @@
 
 namespace tt {
 
+using Array3f = std::array<float, 3>;
+
 template <typename T>
 concept Point3d = requires(T p) {
     // Ensure we can access x, y, z as methods and operator[]
@@ -19,14 +21,27 @@ concept Point3d = requires(T p) {
     { p[2] } -> std::convertible_to<typename T::Float>;
 };
 
-// Type trait to extract the coordinate type from a Point3d conforming type
-template <Point3d T>
+template <typename T>
+concept Array3 = requires(T p) {
+    { p[0] } -> std::convertible_to<typename T::value_type>;
+    { p[1] } -> std::convertible_to<typename T::value_type>;
+    { p[2] } -> std::convertible_to<typename T::value_type>;
+};
+
+template <typename CoordT>
+struct BoundingBox {
+    std::array<CoordT, 3> min_coords;
+    std::array<CoordT, 3> max_coords;
+};
+
+// Type trait to extract the coordinate type
+template <typename T>
 struct PointCoordinateType {
-    using Type = typename T::Float;
+    using Type = typename T::value_type;
 };
 
 // Helper alias for convenience
-template <Point3d T>
+template <typename T>
 using PointCoordinateTypeT = typename PointCoordinateType<T>::Type;
 
 template <Point3d PointT>
@@ -49,6 +64,18 @@ struct Node {
 };
 
 template <Point3d PointT>
+struct KnnResult {
+    using CoordT = PointCoordinateTypeT<PointT>;
+    std::reference_wrapper<PointT> point;
+    CoordT distance;
+};
+
+template <Point3d PointT>
+bool operator<(const KnnResult<PointT> &a, const KnnResult<PointT> &b) {
+    return a.distance < b.distance;
+}
+
+template <Point3d PointT>
 class TentacleTree {
   public:
     using CoordT = PointCoordinateTypeT<PointT>;
@@ -57,6 +84,11 @@ class TentacleTree {
 
     template <std::random_access_iterator BeginIt, std::random_access_iterator EndIt>
     void insert(BeginIt begin, EndIt end);
+
+    void boxDelete(const BoundingBox<CoordT> &box);
+
+    using SearchResult = std::vector<KnnResult<PointT>>;
+    SearchResult knnSearch(const PointT &query_point, std::size_t k);
 
     Node<PointT> *root() const { return root_.get(); }
 
@@ -72,6 +104,9 @@ class TentacleTree {
     template <std::random_access_iterator BeginIt, std::random_access_iterator EndIt>
     std::unique_ptr<Node<PointT>> createOctant(const std::array<CoordT, 3> &center,
                                                CoordT half_extent, BeginIt begin, EndIt end);
+
+    std::unique_ptr<Node<PointT>> boxDelete(const BoundingBox<CoordT> &box,
+                                            std::unique_ptr<Node<PointT>> node);
 };
 
 } // namespace tt

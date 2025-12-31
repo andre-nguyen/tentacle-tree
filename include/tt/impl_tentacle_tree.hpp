@@ -1,12 +1,16 @@
 #pragma once
 
-// This include is just to help auto
+// This include is just to help autocomplete
 #include "tt/tentacle_tree.hpp"
+
+#include "tt/impl/bounded_priority_queue.hpp"
 
 #include <algorithm>
 #include <array>
-#include <cstdint>
+#include <cmath>
+#include <functional>
 #include <limits>
+#include <queue>
 
 namespace tt {
 namespace impl {
@@ -14,22 +18,75 @@ namespace impl {
 template <typename It>
 concept ForwardPoint3dIterator = std::forward_iterator<It> && Point3d<std::iter_value_t<It>>;
 
-template <typename CoordT>
-struct BoundingBox {
-    std::array<CoordT, 3> min_coords;
-    std::array<CoordT, 3> max_coords;
-};
+template <Point3d PointT>
+bool isPointInNode(const std::array<typename Node<PointT>::CoordT, 3> &point,
+                   const Node<PointT> &node) {
+    const auto &center = node.center;
+    const auto &half_extent = node.half_extent;
+    // !! allow boundary points to be inside the node
+    return point[0] <= center[0] + half_extent && point[0] >= center[0] - half_extent &&
+           point[1] <= center[1] + half_extent && point[1] >= center[1] - half_extent &&
+           point[2] <= center[2] + half_extent && point[2] >= center[2] - half_extent;
+}
 
 template <Point3d PointT>
 bool isBoxInNode(const BoundingBox<typename Node<PointT>::CoordT> &box, const Node<PointT> &node) {
+    return isPointInNode<PointT>(box.min_coords, node) &&
+           isPointInNode<PointT>(box.max_coords, node);
+}
+
+template <Point3d PointT>
+auto toBoundingBox(const Node<PointT> &node) {
+    using CoordT = PointCoordinateTypeT<PointT>;
+    BoundingBox<CoordT> bbox;
+    bbox.min_coords = {node.center[0] - node.half_extent, node.center[1] - node.half_extent,
+                       node.center[2] - node.half_extent};
+    bbox.max_coords = {node.center[0] + node.half_extent, node.center[1] + node.half_extent,
+                       node.center[2] + node.half_extent};
+    return bbox;
+}
+
+template <Point3d PointT>
+bool isBoxOverlappingNode(const BoundingBox<typename Node<PointT>::CoordT> &a,
+                          const Node<PointT> &node) {
+    auto b = toBoundingBox<PointT>(node);
+    return (a.min_coords[0] <= b.max_coords[0] && a.max_coords[0] >= b.min_coords[0]) &&
+           (a.min_coords[1] <= b.max_coords[1] && a.max_coords[1] >= b.min_coords[1]) &&
+           (a.min_coords[2] <= b.max_coords[2] && a.max_coords[2] >= b.min_coords[2]);
+}
+
+template <Point3d PointT>
+bool isNodeInBox(const Node<PointT> &node, const BoundingBox<typename Node<PointT>::CoordT> &box) {
+    // A node is fully inside a box if all corners of the node are inside the box
+    // We can check this by verifying the node's bounding box min/max are inside the target box
+    return box.min_coords[0] <= node.center[0] - node.half_extent &&
+           box.min_coords[1] <= node.center[1] - node.half_extent &&
+           box.min_coords[2] <= node.center[2] - node.half_extent &&
+           box.max_coords[0] >= node.center[0] + node.half_extent &&
+           box.max_coords[1] >= node.center[1] + node.half_extent &&
+           box.max_coords[2] >= node.center[2] + node.half_extent;
+}
+
+template <Point3d PointT>
+bool isSphereInNode(const Node<PointT> &node, const PointT &sphere_center,
+                    typename Node<PointT>::CoordT sphere_radius) {
+    // A sphere is fully inside a node if the sphere doesn't extend beyond any of the node's faces
+    // For each axis, check: sphere_center - radius >= node_min AND sphere_center + radius <=
+    // node_max
     using CoordT = typename Node<PointT>::CoordT;
+
     for (std::size_t i = 0; i < 3; ++i) {
         CoordT node_min = node.center[i] - node.half_extent;
         CoordT node_max = node.center[i] + node.half_extent;
-        if (box.max_coords[i] < node_min || box.min_coords[i] > node_max) {
+        CoordT sphere_min = sphere_center[i] - sphere_radius;
+        CoordT sphere_max = sphere_center[i] + sphere_radius;
+
+        // If the sphere extends beyond either boundary, it's not fully inside
+        if (sphere_min < node_min || sphere_max > node_max) {
             return false;
         }
     }
+
     return true;
 }
 
@@ -72,20 +129,20 @@ auto computeCenterAndMaxExtent(const BoundingBox<CoordT> &bbox) {
     return std::make_pair(center, max_extent);
 }
 
-template <Point3d PointT>
+template <Array3 PointT>
 std::size_t computeMortonCode(const PointT &point,
                               const std::array<PointCoordinateTypeT<PointT>, 3> &center) {
     // The code here only has to map to 8 octants, so its actually just 3 bits
     // I'm assuming the code was of type uint32_t so it could be used as an index directly
     // https://github.com/jbehley/octree/blob/8e3927d48d5ce61f94aab6090d77b4434f87dc89/Octree.hpp#L542C16-L542C26
     std::size_t code = 0;
-    if (point.x() > center[0]) {
+    if (point[0] > center[0]) {
         code |= 0b0001;
     }
-    if (point.y() > center[1]) {
+    if (point[1] > center[1]) {
         code |= 0b0010;
     }
-    if (point.z() > center[2]) {
+    if (point[2] > center[2]) {
         code |= 0b0100;
     }
     return code;
@@ -120,14 +177,14 @@ std::array<PointCoordinateTypeT<PointT>, 3>
 computeParentCenter(const Node<PointT> &node,
                     const std::array<PointCoordinateTypeT<PointT>, 3> &target) {
     using CoordT = PointCoordinateTypeT<PointT>;
-    auto parent_extent = node.half_extent * CoordT(2.0);
+    // auto parent_extent = node.half_extent * CoordT(2.0);
     std::array<CoordT, 3> parent_center;
-    // Move the root "up" or "down" in each axis based on which side the node is on
+    // Move the root "towards" the target in each axis
     for (std::size_t i = 0; i < 3; ++i) {
-        if (node.center[i] >= target[i]) {
-            parent_center[i] = node.center[i] + parent_extent;
+        if (node.center[i] < target[i]) {
+            parent_center[i] = node.center[i] + node.half_extent;
         } else {
-            parent_center[i] = node.center[i] - parent_extent;
+            parent_center[i] = node.center[i] - node.half_extent;
         }
     }
 
@@ -139,21 +196,194 @@ computeParentCenter(const Node<PointT> &node,
  * child.
  * @tparam PointT Point type used by the node. Must satisfy the Point3d concept.
  * @param node The node which will be wrapped by a new parent node.
- * @param bbox The bounding box towards which we are expanding until we encompass it.
+ * @param target The point towards which we wish to grow
  * @return The new parent node, with the input node linked as its child.
  */
 template <Point3d PointT>
 std::unique_ptr<Node<PointT>>
 makeParentAndLinkNode(std::unique_ptr<Node<PointT>> node,
-                      const BoundingBox<PointCoordinateTypeT<PointT>> &bbox) {
-    using CoordT = Node<PointT>::CoordT;
+                      const std::array<PointCoordinateTypeT<PointT>, 3> &target) {
+    using CoordT = PointCoordinateTypeT<PointT>;
+    auto parent_node = std::make_unique<Node<PointT>>();
+    parent_node->half_extent = node->half_extent * CoordT(2.0);
+    parent_node->center = computeParentCenter(*node, target);
 
-    auto new_half_extent = node->half_extent * CoordT(2);
-    std::array<CoordT, 3> new_center = node->center;
+    auto morton_code = computeMortonCode(node->center, parent_node->center);
+    parent_node->children[morton_code] = std::move(node);
 
-    // Grow towards the max of the bbox
+    return parent_node;
+}
 
-    // Grow towards the min of the bbox
+/**
+ * Spread tentacles (grows the tree) until the given bounding box is fully encompassed by the tree.
+ * @tparam PointT Point type stored inside a node
+ * @param node The root node from which we grow the tree
+ * @param bbox The bounding box we are trying to grow around
+ * @return New root node of the tree
+ */
+template <Point3d PointT>
+std::unique_ptr<Node<PointT>>
+growTreeUntilAbsorption(std::unique_ptr<Node<PointT>> node,
+                        const BoundingBox<PointCoordinateTypeT<PointT>> &bbox) {
+    std::unique_ptr<Node<PointT>> root = std::move(node);
+    while (!isPointInNode(bbox.max_coords, *root)) {
+        root = makeParentAndLinkNode(std::move(root), bbox.max_coords);
+    }
+
+    while (!isPointInNode(bbox.min_coords, *root)) {
+        root = makeParentAndLinkNode(std::move(root), bbox.min_coords);
+    }
+    return root;
+}
+
+template <std::random_access_iterator BeginIt, std::random_access_iterator EndIt, Point3d PointT>
+void insert(BeginIt begin, EndIt end, Node<PointT> &node, std::size_t bucket_size,
+            PointCoordinateTypeT<PointT> min_extent);
+
+template <std::random_access_iterator BeginIt, std::random_access_iterator EndIt, Point3d PointT>
+void splitAndInsertPoints(BeginIt begin, EndIt end, Node<PointT> &node,
+                          const std::size_t bucket_size,
+                          const PointCoordinateTypeT<PointT> min_extent) {
+    using CoordT = PointCoordinateTypeT<PointT>;
+    auto octant_points = impl::distributePointsToOctants<PointT>(begin, end, node.center);
+    CoordT child_half_extent = node.half_extent * CoordT(0.5);
+    for (std::size_t octant_idx = 0; octant_idx < 8; ++octant_idx) {
+        auto &points_in_octant = octant_points[octant_idx];
+        if (points_in_octant.empty()) {
+            continue;
+        }
+
+        const auto child_center =
+            impl::computeOctantCenter(node.center, node.half_extent, octant_idx);
+        if (!node.children[octant_idx]) {
+            node.children[octant_idx] =
+                std::make_unique<Node<PointT>>(child_center, child_half_extent);
+        }
+        insert(points_in_octant.begin(), points_in_octant.end(), *node.children[octant_idx],
+               bucket_size, min_extent);
+    }
+}
+
+template <std::random_access_iterator BeginIt, std::random_access_iterator EndIt, Point3d PointT>
+void insertIntoLeaf(BeginIt begin, EndIt end, Node<PointT> &node, const std::size_t bucket_size,
+                    std::size_t num_points) {
+    // TODO: downsampling
+    // For now just add the points we can
+    auto new_size = node.points.size() + num_points;
+    if (new_size > bucket_size) {
+        new_size = bucket_size;
+    }
+    node.points.reserve(new_size);
+    for (auto it = begin; it != end && node.points.size() < new_size; ++it) {
+        node.points.push_back(*it);
+    }
+}
+
+template <Point3d PointT>
+bool isLeafNode(Node<PointT> &node, PointCoordinateTypeT<PointT> min_extent) {
+    return node.half_extent <= 2 * min_extent;
+}
+
+template <std::random_access_iterator BeginIt, std::random_access_iterator EndIt, Point3d PointT>
+void insert(BeginIt begin, EndIt end, Node<PointT> &node, const std::size_t bucket_size,
+            const PointCoordinateTypeT<PointT> min_extent) {
+    //     The process of adding new points to an octant Co is similar
+    // to the construction of an octant. If Co is a leaf node and it
+    // satisfies the subdivision criteria, all points (i.e., old points and
+    // new added points) in Co will be recursively subdivided into
+    // child octants. If down-sampling is enabled, eo ≤ 2emin , and
+    // |Po | > b/8, new points will be deleted later instead of being
+    // added to Co .
+    //     Otherwise, a segment of continuous memory
+    // will be allocated for the updated points. If Co has child
+    // octants, the problem becomes assigning the newly added
+    // points to various children, and only the new points are to
+    // be subdivided. This process is similar to the one mentioned
+    // above, except for the recursive updating of octants
+    const bool is_leaf_node = isLeafNode(node, min_extent);
+    const auto num_points = std::distance(begin, end);
+    const bool needs_splitting = num_points > bucket_size && !is_leaf_node;
+    if (needs_splitting) {
+        splitAndInsertPoints(begin, end, node, bucket_size, min_extent);
+    } else {
+        insertIntoLeaf(begin, end, node, bucket_size, num_points);
+    }
+}
+
+template <Point3d PointT>
+void collectLeafNodes(std::vector<const Node<PointT> *> &leaves, const Node<PointT> &node) {
+    bool is_leaf = true;
+    for (const auto &child : node.children) {
+        if (child != nullptr) {
+            is_leaf = false;
+            collectLeafNodes(leaves, *child);
+        }
+    }
+    if (is_leaf) {
+        leaves.push_back(&node);
+    }
+}
+
+template <Point3d PointT>
+std::vector<const Node<PointT> *> collectLeafNodes(const Node<PointT> &node) {
+    std::vector<const Node<PointT> *> leaves;
+    collectLeafNodes(leaves, node);
+    return leaves;
+}
+
+template <Point3d PointT>
+std::vector<std::vector<PointT> *> collectLeafPoints(std::vector<const Node<PointT> *> &leaves) {
+    std::vector<std::vector<PointT> *> leaf_points;
+    for (const auto &leaf : leaves) {
+        leaf_points.push_back(&leaf->points);
+    }
+    return leaf_points;
+}
+
+template <Point3d PointT>
+std::vector<std::vector<PointT> *> collectLeafPoints(const Node<PointT> &node) {
+    auto leaves = collectLeafNodes<PointT>(node);
+    return collectLeafPoints<PointT>(leaves);
+}
+
+template <Point3d PointT>
+auto distance(const PointT &a, const PointT &b) {
+    using CoordT = PointCoordinateTypeT<PointT>;
+    CoordT dx = a[0] - b[0];
+    CoordT dy = a[1] - b[1];
+    CoordT dz = a[2] - b[2];
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+template <typename FloatT>
+auto distance(const std::array<FloatT, 3> &a, const std::array<FloatT, 3> &b) {
+    FloatT dx = a[0] - b[0];
+    FloatT dy = a[1] - b[1];
+    FloatT dz = a[2] - b[2];
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+template <Point3d PointT>
+auto distance(const Node<PointT> &node, const PointT &point) {
+    return distance(node.center, point);
+}
+
+template <Point3d PointT>
+Node<PointT> &findClosestLeafNode(Node<PointT> &node, const PointT &point,
+                                  PointCoordinateTypeT<PointT> min_extent) {
+    if (isLeafNode<PointT>(node, min_extent)) {
+        return node;
+    }
+
+    const auto morton_code = impl::computeMortonCode(point, node.center);
+    auto closest_child = node.children[morton_code].get();
+
+    if (closest_child) {
+        return findClosestLeafNode(*closest_child, point, min_extent);
+    }
+
+    // No children, return current node
+    return node;
 }
 
 } // namespace impl
@@ -182,7 +412,8 @@ void TentacleTree<PointT>::insert(BeginIt begin, EndIt end) {
     // added to the expanded octree (see Fig. 3).
 
     auto bbox = impl::computeBoundingBox(begin, end);
-    bool needs_expansion = !impl::isBoxInNode<PointT>(bbox, *root_);
+    root_ = impl::growTreeUntilAbsorption(std::move(root_), bbox);
+    impl::insert(begin, end, *root_, bucket_size_, min_extent_);
 }
 
 template <Point3d PointT>
@@ -218,7 +449,8 @@ TentacleTree<PointT>::createOctant(const std::array<CoordT, 3> &center, CoordT h
     // Only difference is we get two iterators instead of indices
     auto octant = std::make_unique<Node<PointT>>(center, half_extent);
     const auto num_points = static_cast<std::size_t>(std::distance(begin, end));
-    bool keep_splitting = num_points > bucket_size_ && half_extent > 2 * min_extent_;
+    const bool is_leaf_node = impl::isLeafNode(*octant, min_extent_);
+    bool keep_splitting = num_points > bucket_size_ && !is_leaf_node;
     if (keep_splitting) {
         auto octant_points = impl::distributePointsToOctants<PointT>(begin, end, center);
         CoordT child_half_extent = half_extent * CoordT(0.5);
@@ -238,6 +470,80 @@ TentacleTree<PointT>::createOctant(const std::array<CoordT, 3> &center, CoordT h
         std::copy(begin, end, std::back_inserter(octant->points));
     }
     return octant;
+}
+
+template <Point3d PointT>
+void TentacleTree<PointT>::boxDelete(const BoundingBox<CoordT> &box) {
+    root_ = boxDelete(box, std::move(root_));
+}
+
+template <Point3d PointT>
+std::unique_ptr<Node<PointT>> TentacleTree<PointT>::boxDelete(const BoundingBox<CoordT> &box,
+                                                              std::unique_ptr<Node<PointT>> node) {
+    if (impl::isNodeInBox<PointT>(*node, box)) {
+        return nullptr;
+    }
+
+    if (impl::isBoxOverlappingNode(box, *node)) {
+        const bool is_leaf = impl::isLeafNode<PointT>(*node, min_extent_);
+        if (is_leaf) {
+            return nullptr;
+        }
+
+        for (auto &child : node->children) {
+            if (child) {
+                child = boxDelete(box, std::move(child));
+            }
+        }
+    }
+
+    return std::move(node);
+}
+
+template <Point3d PointT>
+TentacleTree<PointT>::SearchResult TentacleTree<PointT>::knnSearch(const PointT &query_point,
+                                                                   std::size_t k) {
+    // II. C. Nearest Neighbor Search
+    // ...
+    //     Firstly, we recursively search down the i-Octree from
+    // its root node until reach the leaf node closest to q.
+    auto &closest_leaf = impl::findClosestLeafNode(*root_, query_point, min_extent_);
+
+    // Then the distances from q to all points in the leaf node and
+    // corresponding indices will be pushed to priority queue h.
+    impl::BoundedPriorityQueue<KnnResult<PointT>> queue(std::less<KnnResult<PointT>>{}, k);
+    for (const auto &point : closest_leaf.points) {
+        auto dist = impl::distance(query_point, point);
+        queue.push(KnnResult{std::ref(const_cast<PointT &>(point)), dist});
+    }
+    if (queue.isFull() or queue.size() == k) {
+        return queue.destructiveGet();
+    }
+
+    // All leaf nodes so far encountered will be searched before h
+    // is full. If h is full and the search ball S(q, dmax ) defined by
+    // q and the largest distance dmax in h is inside the axis-aligned
+    // box of current octant, the searching is over. If a octant Ck
+    // doesn’t contain the search ball S(q, dmax), then one of the
+    // following three conditions must be satisfied:
+    // ek − |qx − ck,x | < dmax ,(1)
+    // ek − |qy − ck,y | < dmax ,(2)
+    // ek − |qz − ck,z | < dmax ,(3)
+    // where q = (qx , qy , qz )T , ck = (ck,x , ck,y , ck,z )T . If none of
+    // the above conditions hold, the search ball is inside the octant.
+    // We update h by investigating octants overlapping the
+    // search ball S(q, dmax ), since only these could potentially
+    // contain points that are also inside the desired neighborhood.
+    // We define the distance d between q and Ck as below:
+    // d =∥σ(|q − co | − 1eo )∥2 ,
+    // (4)
+    // where 1 = (1, 1, 1)T and σ(x) = x if x > 0, otherwise
+    // σ(x) = 0. d < dmax indicates that Ck overlaps S(q, dmax ).
+    // In order to speed up the process, we sort the candidate child
+    // octants of Co according to their distances to Ck and get 8
+    // different sequences in Iorder . Such that the closer octants are
+    // earlier to be searched and the search reaches its end early.
+    return SearchResult{};
 }
 
 } // namespace tt
