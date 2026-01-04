@@ -1344,7 +1344,12 @@ TEST_CASE_FIXTURE(PointCloudTestFixture<float>, "knnSearch") {
         tree.insert(points_.begin(), points_.end());
         tree.insert(points_.begin(), points_.end());
 
-        const PointF query_point{{0.0f, 0.0f, 0.0f}};
+        const auto rec = rerun::RecordingStream("knnSearch");
+        rec.spawn().exit_on_failure();
+        rec.log("points", rerun::Points3D(toRerunPositions(points_)));
+        rec.log("tree", toRerunBoxes(tree, rerun::Color(0, 0, 255)));
+
+        const PointF query_point{{1.0f, 1.0f, 1.2f}};
         constexpr std::size_t k = 3;
         auto neighbors = tree.knnSearch(query_point, k);
         REQUIRE(neighbors.size() == k);
