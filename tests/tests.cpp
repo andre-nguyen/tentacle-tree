@@ -556,6 +556,40 @@ TEST_CASE("initialize") {
     // rec.log("boxes", toRerunBoxes(tree));
 }
 
+// I'm not sure if this is expected behavior according to the algorithm but if we have a tree of
+// bucket size 2 and insert 2 points in the same location, the tree does not split down to min
+// extent size. But if you add a 3rd point in the same location, it does.
+// This makes for the odd case where a leaf isn't necessarily a node of size min_extent.
+// TEST_CASE("init two points") {
+//     std::vector<Point<double>> points = {{{-10.1, -10.0, -10.0}},
+//                                          {{-10.1, -10.0, -10.0}},
+//                                          {{-10.1, -10.0, -10.0}},
+//                                          {{10.5, 10.0, 10.0}},
+//                                          {{10.5, 10.0, 10.0}}};
+//
+//     tt::TentacleTree<Point<double>> tree(2, 0.01);
+//     tree.insert(points.begin(), points.end());
+//
+//     const auto root = tree.root();
+//     REQUIRE(root != nullptr);
+//     // CHECK(root->points.size() == 0); // should have split
+//     //
+//     // // Check that each child has one point
+//     // std::size_t total_points = 0;
+//     // for (const auto &child : root->children) {
+//     //     if (child) {
+//     //         total_points += child->points.size();
+//     //         CHECK(child->points.size() == 1);
+//     //     }
+//     // }
+//     // CHECK(total_points == points.size());
+//
+//     const auto rec = rerun::RecordingStream("tentacle_tree_two_points");
+//     rec.spawn().exit_on_failure();
+//     rec.log("points", rerun::Points3D(toRerunPositions(points)));
+//     rec.log("tree", toRerunBoxes(tree, rerun::Color(0, 255, 0)));
+// }
+
 template <typename FloatT>
 class PointCloudTestFixture {
   public:
@@ -1125,8 +1159,8 @@ TEST_CASE("makeParentAndLinkNode") {
                                    [](const auto &child) { return child != nullptr; });
         CHECK(count == 1);
 
-        auto child = std::find_if(parent->children.begin(), parent->children.end(),
-                                  [](const auto &child) { return child != nullptr; });
+        auto child =
+            std::ranges::find_if(parent->children, [](const auto &c) { return c != nullptr; });
         CHECK(child != parent->children.end());
         CHECK((*child)->center[0] == doctest::Approx(0.0f));
         CHECK((*child)->center[1] == doctest::Approx(0.0f));
@@ -1148,8 +1182,8 @@ TEST_CASE("makeParentAndLinkNode") {
                                    [](const auto &child) { return child != nullptr; });
         CHECK(count == 1);
 
-        auto child = std::find_if(parent->children.begin(), parent->children.end(),
-                                  [](const auto &child) { return child != nullptr; });
+        auto child =
+            std::ranges::find_if(parent->children, [](const auto &c) { return c != nullptr; });
         CHECK(child != parent->children.end());
         CHECK((*child)->center[0] == doctest::Approx(1.0f));
         CHECK((*child)->center[1] == doctest::Approx(1.0f));
@@ -1240,13 +1274,13 @@ TEST_CASE("findClosestLeafNode") {
         // If we change the query we should still get the same leaf because there's only one leaf
         auto &other_leaf =
             tt::impl::findClosestLeafNode(*tree.root(), {100.f, 222.1f, 444.1f}, kMinExtent);
-        REQUIRE(leaf.points.size() == 1);
+        REQUIRE(other_leaf.points.size() == 1);
         for (const auto &c : leaf.children) {
             REQUIRE(c == nullptr);
         }
-        REQUIRE(leaf.center[0] == doctest::Approx(0.0f));
-        REQUIRE(leaf.center[1] == doctest::Approx(0.0f));
-        REQUIRE(leaf.center[2] == doctest::Approx(0.0f));
+        REQUIRE(other_leaf.center[0] == doctest::Approx(0.0f));
+        REQUIRE(other_leaf.center[1] == doctest::Approx(0.0f));
+        REQUIRE(other_leaf.center[2] == doctest::Approx(0.0f));
     }
     {
         tt::TentacleTree<Point<float>> tree(2, kMinExtent);
@@ -1521,4 +1555,38 @@ TEST_CASE("BoundedPriorityQueue::push") {
         // Verify the point reference is correctly stored
         CHECK(&pq.top().point.get() == &points[1]); // Top is results[1] (distance 10.0)
     }
+}
+
+TEST_CASE("KNN search") {
+    constexpr std::size_t kBucketSize = 5;
+    constexpr float kMinNodeSize = 0.1f;
+    tt::TentacleTree<Point<float>> tree(kBucketSize, kMinNodeSize);
+    // clang-format off
+    std::vector<Point<float>> points = {
+        {10, 10, 10},
+        {-10, -10, -10},
+        {2, 2, 2},
+        {2, 2, 2},
+        {2, 2, 2},
+        {-2, 2, 2}
+        {2, 2, 2},
+        {2, 2, 2},
+    };
+    // clang-format on
+    tree.insert(points.begin(), points.end());
+
+    // const auto rec = rerun::RecordingStream("tentacle_tree_find_closest_leaf");
+    // rec.spawn().exit_on_failure();
+    // rec.log("points", rerun::Points3D(toRerunPositions(tree)));
+    // rec.log("tree", toRerunBoxes(tree, rerun::Color(0, 0, 255)));
+
+    SUBCASE("Inside query - single") {
+        const Point<float> point{0, 0, 0};
+        auto neighbours = tree.knnSearch(point, 1);
+        CHECK(neighbours.size() == 1);
+        const auto &res = neighbours[0].point.get();
+        CHECK(res.x() == doctest::Approx(2.0));
+    }
+
+    SUBCASE("Inside query - multiple") {}
 }

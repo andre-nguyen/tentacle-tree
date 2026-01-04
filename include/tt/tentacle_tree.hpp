@@ -66,7 +66,7 @@ struct Node {
 template <Point3d PointT>
 struct KnnResult {
     using CoordT = PointCoordinateTypeT<PointT>;
-    std::reference_wrapper<PointT> point;
+    std::reference_wrapper<const PointT> point;
     CoordT distance;
 };
 
@@ -102,8 +102,8 @@ class TentacleTree {
     void init(BeginIt begin, EndIt end);
 
     template <std::random_access_iterator BeginIt, std::random_access_iterator EndIt>
-    std::unique_ptr<Node<PointT>> createOctant(const std::array<CoordT, 3> &center,
-                                               CoordT half_extent, BeginIt begin, EndIt end);
+    std::unique_ptr<Node<PointT>> createNode(const std::array<CoordT, 3> &center,
+                                             CoordT half_extent, BeginIt begin, EndIt end);
 
     std::unique_ptr<Node<PointT>> boxDelete(const BoundingBox<CoordT> &box,
                                             std::unique_ptr<Node<PointT>> node);

@@ -280,8 +280,14 @@ void insertIntoLeaf(BeginIt begin, EndIt end, Node<PointT> &node, const std::siz
 }
 
 template <Point3d PointT>
-bool isLeafNode(Node<PointT> &node, PointCoordinateTypeT<PointT> min_extent) {
+bool isNodeSmallestPossible(const Node<PointT> &node, PointCoordinateTypeT<PointT> min_extent) {
     return node.half_extent <= 2 * min_extent;
+}
+
+template <Point3d PointT>
+bool hasChildren(const Node<PointT> &node) {
+    return std::any_of(node.children.begin(), node.children.end(),
+                       [](const std::unique_ptr<Node<PointT>> &c) { return c != nullptr; });
 }
 
 template <std::random_access_iterator BeginIt, std::random_access_iterator EndIt, Point3d PointT>
@@ -300,9 +306,9 @@ void insert(BeginIt begin, EndIt end, Node<PointT> &node, const std::size_t buck
     // points to various children, and only the new points are to
     // be subdivided. This process is similar to the one mentioned
     // above, except for the recursive updating of octants
-    const bool is_leaf_node = isLeafNode(node, min_extent);
+    const bool is_smallest_possible = isNodeSmallestPossible(node, min_extent);
     const auto num_points = std::distance(begin, end);
-    const bool needs_splitting = num_points > bucket_size && !is_leaf_node;
+    const bool needs_splitting = num_points > bucket_size && !is_smallest_possible;
     if (needs_splitting) {
         splitAndInsertPoints(begin, end, node, bucket_size, min_extent);
     } else {
@@ -371,7 +377,8 @@ auto distance(const Node<PointT> &node, const PointT &point) {
 template <Point3d PointT>
 Node<PointT> &findClosestLeafNode(Node<PointT> &node, const PointT &point,
                                   PointCoordinateTypeT<PointT> min_extent) {
-    if (isLeafNode<PointT>(node, min_extent)) {
+    // TODO: This might be wrong and should check if the children are nullptr instead
+    if (isNodeSmallestPossible<PointT>(node, min_extent)) {
         return node;
     }
 
@@ -384,6 +391,54 @@ Node<PointT> &findClosestLeafNode(Node<PointT> &node, const PointT &point,
 
     // No children, return current node
     return node;
+}
+
+template <typename PointT>
+bool knnSearch(const Node<PointT> &node, const PointT &query_point, std::size_t k,
+               BoundedPriorityQueue<KnnResult<PointT>> &queue) {
+    // II. C. Nearest Neighbor Search
+    // I'm not sure I fully understand the paper's description of the algorithm here
+    // Sounds like a depth first search of the tree following the morton code.
+    // If after hitting the closest leaf we still need more neighbors, then we search the rest of
+    // the nodes.
+    // There is also an early exit clause with the search ball that allows us to not search other
+    // nodes.
+    if (!impl::hasChildren(node)) {
+        for (const auto &point : node.points) {
+            KnnResult<PointT> result{point, impl::distance<PointT>(query_point, point)};
+            queue.push(result);
+        }
+        return queue.isFull() and impl::isSphereInNode(node, query_point, queue.top().distance);
+    }
+
+    auto morton_code = impl::computeMortonCode(query_point, node.center);
+    bool stop_search = knnSearch(*node.children[morton_code], query_point, k, queue);
+    if (stop_search) {
+        return stop_search;
+    }
+
+    // TODO: Implement sorted lookup table instead of iterating blindly
+    for (std::size_t i = 0; i < 8; i++) {
+        if (i == morton_code) {
+            continue;
+        }
+        if (node.children[i] == nullptr) {
+            continue;
+        }
+
+        // TODO: early exit if node can't possibly contain something better
+        stop_search = knnSearch(*node.children[i], query_point, k, queue);
+        if (stop_search) {
+            return stop_search;
+        }
+    }
+
+    // Is it possible for other branches to contain something better?
+    // Quote
+    //   If h is full and the search ball S(q, dmax ) defined by
+    //   q and the largest distance dmax in h is inside the axis-aligned
+    //   box of current octant, the searching is over.
+    return queue.isFull() and isSphereInNode(node, query_point, queue.top().distance);
 }
 
 } // namespace impl
@@ -435,22 +490,22 @@ void TentacleTree<PointT>::init(BeginIt begin, EndIt end) {
     // Assume all points are valid and just find the bounding box
     auto bbox = impl::computeBoundingBox(begin, end);
     auto [center, max_extent] = impl::computeCenterAndMaxExtent(bbox);
-    root_ = createOctant(center, max_extent, begin, end);
+    root_ = createNode(center, max_extent, begin, end);
 }
 
 template <Point3d PointT>
 template <std::random_access_iterator BeginIt, std::random_access_iterator EndIt>
-std::unique_ptr<Node<PointT>>
-TentacleTree<PointT>::createOctant(const std::array<CoordT, 3> &center, CoordT half_extent,
-                                   BeginIt begin, EndIt end) {
+std::unique_ptr<Node<PointT>> TentacleTree<PointT>::createNode(const std::array<CoordT, 3> &center,
+                                                               CoordT half_extent, BeginIt begin,
+                                                               EndIt end) {
     // See algorithm 2 in J. Behley, V. Steinhage, A.B. Cremers. Efficient Radius Neighbor Search in
     // Three-dimensional Point Clouds, Proc. of the IEEE International Conference on Robotics and
     // Automation (ICRA), 2015.
     // Only difference is we get two iterators instead of indices
-    auto octant = std::make_unique<Node<PointT>>(center, half_extent);
+    auto node = std::make_unique<Node<PointT>>(center, half_extent);
     const auto num_points = static_cast<std::size_t>(std::distance(begin, end));
-    const bool is_leaf_node = impl::isLeafNode(*octant, min_extent_);
-    bool keep_splitting = num_points > bucket_size_ && !is_leaf_node;
+    const bool is_node_smallest_possible = impl::isNodeSmallestPossible(*node, min_extent_);
+    bool keep_splitting = num_points > bucket_size_ && !is_node_smallest_possible;
     if (keep_splitting) {
         auto octant_points = impl::distributePointsToOctants<PointT>(begin, end, center);
         CoordT child_half_extent = half_extent * CoordT(0.5);
@@ -461,15 +516,15 @@ TentacleTree<PointT>::createOctant(const std::array<CoordT, 3> &center, CoordT h
             }
 
             const auto child_center = impl::computeOctantCenter(center, half_extent, octant_idx);
-            octant->children[octant_idx] = createOctant(
+            node->children[octant_idx] = createNode(
                 child_center, child_half_extent, points_in_octant.begin(), points_in_octant.end());
         }
     } else {
         // This is a leaf node we can store the points now
-        octant->points.reserve(num_points);
-        std::copy(begin, end, std::back_inserter(octant->points));
+        node->points.reserve(num_points);
+        std::copy(begin, end, std::back_inserter(node->points));
     }
-    return octant;
+    return node;
 }
 
 template <Point3d PointT>
@@ -485,7 +540,7 @@ std::unique_ptr<Node<PointT>> TentacleTree<PointT>::boxDelete(const BoundingBox<
     }
 
     if (impl::isBoxOverlappingNode(box, *node)) {
-        const bool is_leaf = impl::isLeafNode<PointT>(*node, min_extent_);
+        const bool is_leaf = impl::hasChildren(*node);
         if (is_leaf) {
             return nullptr;
         }
@@ -503,47 +558,9 @@ std::unique_ptr<Node<PointT>> TentacleTree<PointT>::boxDelete(const BoundingBox<
 template <Point3d PointT>
 TentacleTree<PointT>::SearchResult TentacleTree<PointT>::knnSearch(const PointT &query_point,
                                                                    std::size_t k) {
-    // II. C. Nearest Neighbor Search
-    // ...
-    //     Firstly, we recursively search down the i-Octree from
-    // its root node until reach the leaf node closest to q.
-    auto &closest_leaf = impl::findClosestLeafNode(*root_, query_point, min_extent_);
-
-    // Then the distances from q to all points in the leaf node and
-    // corresponding indices will be pushed to priority queue h.
-    impl::BoundedPriorityQueue<KnnResult<PointT>> queue(std::less<KnnResult<PointT>>{}, k);
-    for (const auto &point : closest_leaf.points) {
-        auto dist = impl::distance(query_point, point);
-        queue.push(KnnResult{std::ref(const_cast<PointT &>(point)), dist});
-    }
-    if (queue.isFull() or queue.size() == k) {
-        return queue.destructiveGet();
-    }
-
-    // All leaf nodes so far encountered will be searched before h
-    // is full. If h is full and the search ball S(q, dmax ) defined by
-    // q and the largest distance dmax in h is inside the axis-aligned
-    // box of current octant, the searching is over. If a octant Ck
-    // doesn’t contain the search ball S(q, dmax), then one of the
-    // following three conditions must be satisfied:
-    // ek − |qx − ck,x | < dmax ,(1)
-    // ek − |qy − ck,y | < dmax ,(2)
-    // ek − |qz − ck,z | < dmax ,(3)
-    // where q = (qx , qy , qz )T , ck = (ck,x , ck,y , ck,z )T . If none of
-    // the above conditions hold, the search ball is inside the octant.
-    // We update h by investigating octants overlapping the
-    // search ball S(q, dmax ), since only these could potentially
-    // contain points that are also inside the desired neighborhood.
-    // We define the distance d between q and Ck as below:
-    // d =∥σ(|q − co | − 1eo )∥2 ,
-    // (4)
-    // where 1 = (1, 1, 1)T and σ(x) = x if x > 0, otherwise
-    // σ(x) = 0. d < dmax indicates that Ck overlaps S(q, dmax ).
-    // In order to speed up the process, we sort the candidate child
-    // octants of Co according to their distances to Ck and get 8
-    // different sequences in Iorder . Such that the closer octants are
-    // earlier to be searched and the search reaches its end early.
-    return SearchResult{};
+    impl::BoundedPriorityQueue<KnnResult<PointT>> queue(std::less<KnnResult<PointT>>(), k);
+    impl::knnSearch(*root_, query_point, k, queue);
+    return queue.destructiveGet();
 }
 
 } // namespace tt
