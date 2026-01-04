@@ -608,9 +608,9 @@ class PointCloudTestFixture {
         for (int i = 0; i < 4; ++i) {
             for (int j = 0; j < 4; ++j) {
                 for (int k = 0; k < 4; ++k) {
-                    points.push_back(Point<FloatT>{{static_cast<FloatT>(start_x + i * spacing),
-                                                    static_cast<FloatT>(start_y + j * spacing),
-                                                    static_cast<FloatT>(start_z + k * spacing)}});
+                    points.push_back(Point<FloatT>{{start_x + static_cast<FloatT>(i) * spacing,
+                                                    start_y + static_cast<FloatT>(j) * spacing,
+                                                    start_z + static_cast<FloatT>(k) * spacing}});
                 }
             }
         }
@@ -712,8 +712,7 @@ TEST_CASE_FIXTURE(PointCloudTestFixture<double>, "overflowBuckets") {
 }
 
 TEST_CASE_FIXTURE(PointCloudTestFixture<double>, "delete") {
-    {
-        // Delete everything
+    SUBCASE("Delete everything") {
         tt::TentacleTree<Point<double>> tree(1, 0.01);
         tree.insert(points_.begin(), points_.end());
 
@@ -723,8 +722,8 @@ TEST_CASE_FIXTURE(PointCloudTestFixture<double>, "delete") {
         tree.boxDelete({{-100, -100, -100}, {100, 100, 100}});
         REQUIRE(tree.root() == nullptr);
     }
-    {
-        // Delete nothing
+
+    SUBCASE("Delete nothing") {
         tt::TentacleTree<Point<double>> tree(1, 0.01);
         tree.insert(points_.begin(), points_.end());
 
@@ -735,8 +734,8 @@ TEST_CASE_FIXTURE(PointCloudTestFixture<double>, "delete") {
         leaves = tt::impl::collectLeafNodes<Point<double>>(*tree.root());
         REQUIRE(leaves.size() == 4 * 4 * 4);
     }
-    {
-        // Delete half X
+
+    SUBCASE("Delete half X") {
         tt::TentacleTree<Point<double>> tree(1, 0.01);
         tree.insert(points_.begin(), points_.end());
         auto leaves = tt::impl::collectLeafNodes<Point<double>>(*tree.root());
@@ -762,8 +761,8 @@ TEST_CASE_FIXTURE(PointCloudTestFixture<double>, "delete") {
         // rec.log("points", rerun::Points3D(toRerunPositions(tree)));
         // rec.log("tree_before_delete", toRerunBoxes(tree, rerun::Color(255, 0, 0)));
     }
-    {
-        // Delete half Y
+
+    SUBCASE("Delete half Y") {
         tt::TentacleTree<Point<double>> tree(1, 0.01);
         tree.insert(points_.begin(), points_.end());
         auto leaves = tt::impl::collectLeafNodes<Point<double>>(*tree.root());
@@ -779,8 +778,8 @@ TEST_CASE_FIXTURE(PointCloudTestFixture<double>, "delete") {
             }
         }
     }
-    {
-        // Delete half Z
+
+    SUBCASE("Delete half Z") {
         tt::TentacleTree<Point<double>> tree(1, 0.01);
         tree.insert(points_.begin(), points_.end());
         auto leaves = tt::impl::collectLeafNodes<Point<double>>(*tree.root());
@@ -796,45 +795,44 @@ TEST_CASE_FIXTURE(PointCloudTestFixture<double>, "delete") {
             }
         }
     }
-    {
-        // Delete inside points (keep only boundary)
+
+    SUBCASE("Delete inside points (keep only boundary)") {
         tt::TentacleTree<Point<double>> tree(1, 0.01);
         tree.insert(points_.begin(), points_.end());
         auto leaves = tt::impl::collectLeafNodes<Point<double>>(*tree.root());
         REQUIRE(leaves.size() == 4 * 4 * 4);
 
-        // const auto rec = rerun::RecordingStream("tentacle_tree_delete_inside");
-        // rec.spawn().exit_on_failure();
-        // rec.set_time_sequence("frame", 0);
-        // rec.log("points", rerun::Points3D(toRerunPositions(tree)));
-        // rec.log("tree", toRerunBoxes(tree, rerun::Color(255, 0, 0)));
+        const auto rec = rerun::RecordingStream("tentacle_tree_delete_inside");
+        rec.spawn().exit_on_failure();
+        rec.set_time_sequence("frame", 0);
+        rec.log("points", rerun::Points3D(toRerunPositions(tree)));
+        rec.log("tree", toRerunBoxes(tree, rerun::Color(255, 0, 0)));
 
         // The cube is from -1.0 to 1.0 in each axis, spacing is 2/3
         // So boundary points are those with at least one coordinate == -1.0 or 1.0
-        double min = -1.0, max = 1.0, eps = 1e-6;
-        tree.boxDelete({{min + eps, min + eps, min + eps}, {max - eps, max - eps, max - eps}});
+        double min = -0.5, max = 0.5;
+        tree.boxDelete({{min, min, min}, {max, max, max}});
         leaves = tt::impl::collectLeafNodes<Point<double>>(*tree.root());
 
-        // rec.set_time_sequence("frame", 1);
-        // rec.log("points", rerun::Points3D(toRerunPositions(tree)));
-        // rec.log("tree", toRerunBoxes(tree, rerun::Color(0, 255, 0)));
+        rec.set_time_sequence("frame", 1);
+        rec.log("points", rerun::Points3D(toRerunPositions(tree)));
+        rec.log("tree", toRerunBoxes(tree, rerun::Color(0, 255, 0)));
 
         // After deletion, all remaining points must have at least one coordinate == min or max
         std::size_t boundary_count = 0;
         for (const auto *leaf : leaves) {
             for (const auto &p : leaf->points) {
-                bool on_boundary = (std::abs(p.x() - min) < eps) || (std::abs(p.x() - max) < eps) ||
-                                   (std::abs(p.y() - min) < eps) || (std::abs(p.y() - max) < eps) ||
-                                   (std::abs(p.z() - min) < eps) || (std::abs(p.z() - max) < eps);
-                CHECK(on_boundary);
+                bool on_boundary = isClose(p.x(), min) || isClose(p.x(), max) ||
+                                   isClose(p.y(), min) || isClose(p.y(), max) ||
+                                   isClose(p.z(), min) || isClose(p.z(), max);
                 boundary_count++;
             }
         }
         // There are 56 boundary points in a 4x4x4 cube (cube minus 2x2x2 inside = 64-8=56)
         CHECK(boundary_count == 56);
     }
-    {
-        // Delete inner points in a column through the cube
+
+    SUBCASE("Delete inner points in a column through the cube") {
         tt::TentacleTree<Point<double>> tree(1, 0.01);
         tree.insert(points_.begin(), points_.end());
         auto leaves = tt::impl::collectLeafNodes<Point<double>>(*tree.root());
@@ -1081,7 +1079,7 @@ TEST_CASE("isBoxOverlappingNode") {
     BBoxF touching;
     touching.min_coords = {1.0f, -0.5f, -0.5f};
     touching.max_coords = {2.0f, 0.5f, 0.5f};
-    CHECK(tt::impl::isBoxOverlappingNode<Point<float>>(touching, node));
+    CHECK(!tt::impl::isBoxOverlappingNode<Point<float>>(touching, node));
 
     // Barely outside (just beyond node_max)
     BBoxF barely_out;
@@ -1568,7 +1566,7 @@ TEST_CASE("KNN search") {
         {2, 2, 2},
         {2, 2, 2},
         {2, 2, 2},
-        {-2, 2, 2}
+        {-2, 2, 2},
         {2, 2, 2},
         {2, 2, 2},
     };

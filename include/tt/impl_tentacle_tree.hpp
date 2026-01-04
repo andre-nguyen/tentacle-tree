@@ -50,9 +50,11 @@ template <Point3d PointT>
 bool isBoxOverlappingNode(const BoundingBox<typename Node<PointT>::CoordT> &a,
                           const Node<PointT> &node) {
     auto b = toBoundingBox<PointT>(node);
-    return (a.min_coords[0] <= b.max_coords[0] && a.max_coords[0] >= b.min_coords[0]) &&
-           (a.min_coords[1] <= b.max_coords[1] && a.max_coords[1] >= b.min_coords[1]) &&
-           (a.min_coords[2] <= b.max_coords[2] && a.max_coords[2] >= b.min_coords[2]);
+    // Treat touching at faces/edges/corners as non-overlapping. Use strict comparisons so that
+    // intervals that only meet at a boundary are considered non-overlapping.
+    return (a.min_coords[0] < b.max_coords[0] && a.max_coords[0] > b.min_coords[0]) &&
+           (a.min_coords[1] < b.max_coords[1] && a.max_coords[1] > b.min_coords[1]) &&
+           (a.min_coords[2] < b.max_coords[2] && a.max_coords[2] > b.min_coords[2]);
 }
 
 template <Point3d PointT>
@@ -308,11 +310,12 @@ void insert(BeginIt begin, EndIt end, Node<PointT> &node, const std::size_t buck
     // above, except for the recursive updating of octants
     const bool is_smallest_possible = isNodeSmallestPossible(node, min_extent);
     const auto num_points = std::distance(begin, end);
-    const bool needs_splitting = num_points > bucket_size && !is_smallest_possible;
+    const bool needs_splitting =
+        num_points > static_cast<decltype(num_points)>(bucket_size) && !is_smallest_possible;
     if (needs_splitting) {
         splitAndInsertPoints(begin, end, node, bucket_size, min_extent);
     } else {
-        insertIntoLeaf(begin, end, node, bucket_size, num_points);
+        insertIntoLeaf(begin, end, node, bucket_size, static_cast<std::size_t>(num_points));
     }
 }
 
@@ -540,7 +543,7 @@ std::unique_ptr<Node<PointT>> TentacleTree<PointT>::boxDelete(const BoundingBox<
     }
 
     if (impl::isBoxOverlappingNode(box, *node)) {
-        const bool is_leaf = impl::hasChildren(*node);
+        const bool is_leaf = !impl::hasChildren(*node);
         if (is_leaf) {
             return nullptr;
         }
