@@ -421,12 +421,11 @@ bool knnSearch(const Node<PointT> &node, const PointT &query_point, std::size_t 
         return stop_search;
     }
 
-    using FloatT = PointCoordinateTypeT<PointT>;
     // Each entry is a sorted array of the neighboring morton codes on the index
     // example: kSortedNeighbourLut[2] would give the sorted neighbor morton codes of the node of
     // code '2'
     // clang-format off
-    constexpr std::array<std::array<FloatT, 7>, 8> kSortedNeighbourLut = {
+    constexpr std::array<std::array<std::size_t, 7>, 8> kSortedNeighbourLut = {
         {
             {1, 2, 4, 3, 5, 6, 7},
             {0, 3, 5, 2, 4, 7, 6},
@@ -438,17 +437,13 @@ bool knnSearch(const Node<PointT> &node, const PointT &query_point, std::size_t 
             {3, 5, 6, 1, 2, 4, 0}
         }};
     // clang-format on
-    // TODO: Implement sorted lookup table instead of iterating blindly
-    for (std::size_t i = 0; i < 8; i++) {
-        if (i == morton_code) {
-            continue;
-        }
-        if (node.children[i] == nullptr) {
+    for (auto candidate_code : kSortedNeighbourLut[morton_code]) {
+        const auto &candidate = node.children[candidate_code];
+        if (candidate == nullptr) {
             continue;
         }
 
-        // TODO: early exit if node can't possibly contain something better
-        stop_search = knnSearch(*node.children[i], query_point, k, queue);
+        stop_search = knnSearch(*candidate, query_point, k, queue);
         if (stop_search) {
             return stop_search;
         }
@@ -473,9 +468,9 @@ PointCoordinateTypeT<PointT> nodeToPointDistance(const Node<PointT> &node, const
     x[0] = std::abs(node.center[0] - point[0]) - node.half_extent;
     x[1] = std::abs(node.center[1] - point[1]) - node.half_extent;
     x[2] = std::abs(node.center[2] - point[2]) - node.half_extent;
-    auto sigma = [](PointCoordinateTypeT<PointT> x) { return x > 0 ? x : 0; };
-    auto sq = [](PointCoordinateTypeT<PointT> x) { return x * x; };
-    auto sigma_sq = [sigma, sq](PointCoordinateTypeT<PointT> x) { return sq(sigma(x)); };
+    auto sigma = [](PointCoordinateTypeT<PointT> a) { return a > 0 ? a : 0; };
+    auto sq = [](PointCoordinateTypeT<PointT> a) { return a * a; };
+    auto sigma_sq = [sigma, sq](PointCoordinateTypeT<PointT> a) { return sq(sigma(a)); };
     std::for_each(x.begin(), x.end(), sigma_sq);
     return std::sqrt(x[0] + x[1] + x[2]);
 }

@@ -804,11 +804,11 @@ TEST_CASE_FIXTURE(PointCloudTestFixture<double>, "delete") {
         auto leaves = tt::impl::collectLeafNodes<Point<double>>(*tree.root());
         REQUIRE(leaves.size() == 4 * 4 * 4);
 
-        const auto rec = rerun::RecordingStream("tentacle_tree_delete_inside");
-        rec.spawn().exit_on_failure();
-        rec.set_time_sequence("frame", 0);
-        rec.log("points", rerun::Points3D(toRerunPositions(tree)));
-        rec.log("tree", toRerunBoxes(tree, rerun::Color(255, 0, 0)));
+        // const auto rec = rerun::RecordingStream("tentacle_tree_delete_inside");
+        // rec.spawn().exit_on_failure();
+        // rec.set_time_sequence("frame", 0);
+        // rec.log("points", rerun::Points3D(toRerunPositions(tree)));
+        // rec.log("tree", toRerunBoxes(tree, rerun::Color(255, 0, 0)));
 
         // The cube is from -1.0 to 1.0 in each axis, spacing is 2/3
         // So boundary points are those with at least one coordinate == -1.0 or 1.0
@@ -816,9 +816,9 @@ TEST_CASE_FIXTURE(PointCloudTestFixture<double>, "delete") {
         tree.boxDelete({{min, min, min}, {max, max, max}});
         leaves = tt::impl::collectLeafNodes<Point<double>>(*tree.root());
 
-        rec.set_time_sequence("frame", 1);
-        rec.log("points", rerun::Points3D(toRerunPositions(tree)));
-        rec.log("tree", toRerunBoxes(tree, rerun::Color(0, 255, 0)));
+        // rec.set_time_sequence("frame", 1);
+        // rec.log("points", rerun::Points3D(toRerunPositions(tree)));
+        // rec.log("tree", toRerunBoxes(tree, rerun::Color(0, 255, 0)));
 
         // After deletion, all remaining points must have at least one coordinate == min or max
         std::size_t boundary_count = 0;
@@ -1678,11 +1678,8 @@ TEST_CASE("search LUT generation") {
     }
     std::ranges::sort(codes,
                       [](const CodePoint &a, const CodePoint &b) { return a.code < b.code; });
-    // std::ranges::for_each(codes, [](const auto &cp) {
-    //     std::cout << std::format("{} [{} {} {}]\n", cp.code, cp.point[0], cp.point[1],
-    //     cp.point[2]);
-    // });
 
+    std::cout << "kSortedNeighbourLut = {\n";
     for (std::size_t i = 0; i < 8; ++i) {
         tt::Node<Point<float>> node{std::to_array(codes[i].point.coords), 0.5f};
         std::vector<CodePointDistance> neighbours;
@@ -1693,17 +1690,17 @@ TEST_CASE("search LUT generation") {
             neighbours.push_back({codes[j].code, codes[j].point,
                                   tt::impl::nodeToPointDistance(node, codes[j].point)});
         }
-        // std::ranges::for_each(neighbours, [](const auto &cpd) {
-        //     std::cout << std::format("{} [{} {} {}] - {}\n", cpd.code, cpd.point[0],
-        //     cpd.point[1],
-        //                              cpd.point[2], cpd.distance);
-        // });
         std::ranges::sort(neighbours, [](const CodePointDistance &a, const CodePointDistance &b) {
             return a.distance < b.distance;
         });
-        std::cout << "{";
-        std::ranges::for_each(neighbours,
-                              [](const auto &cpd) { std::cout << std::format("{},", cpd.code); });
-        std::cout << "},\n";
+        std::cout << "\t{";
+        for (std::size_t k = 0; k < neighbours.size(); ++k) {
+            if (k != 0) {
+                std::cout << ", ";
+            }
+            std::cout << neighbours[k].code;
+        }
+        std::cout << (i == 7 ? "}\n" : "},\n");
     }
+    std::cout << "}\n";
 }
