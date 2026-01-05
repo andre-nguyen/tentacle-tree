@@ -4,7 +4,9 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
 
+#include <format>
 #include <functional>
+#include <iostream>
 #include <optional>
 #include <random>
 #include <rerun.hpp>
@@ -432,7 +434,7 @@ std::vector<rerun::Position3D> toRerunPositions(const tt::TentacleTree<Point<Flo
 
 template <tt::Point3d PointT>
 void toRerunBoxes(const tt::Node<PointT> &node,
-                  std::vector<rerun::components::PoseTranslation3D> &centers,
+                  std::vector<rerun::components::Translation3D> &centers,
                   std::vector<rerun::components::HalfSize3D> &half_sizes,
                   const std::optional<rerun::Color> &color = std::nullopt) {
     centers.emplace_back(static_cast<float>(node.center[0]), static_cast<float>(node.center[1]),
@@ -451,7 +453,7 @@ void toRerunBoxes(const tt::Node<PointT> &node,
 template <tt::Point3d PointT>
 rerun::Boxes3D toRerunBoxes(const tt::Node<PointT> &node,
                             const std::optional<rerun::Color> &color = std::nullopt) {
-    std::vector<rerun::components::PoseTranslation3D> centers;
+    std::vector<rerun::components::Translation3D> centers;
     std::vector<rerun::components::HalfSize3D> half_sizes;
     toRerunBoxes(node, centers, half_sizes, color);
     if (color.has_value()) {
@@ -1318,49 +1320,6 @@ TEST_CASE("findClosestLeafNode") {
     }
 }
 
-TEST_CASE_FIXTURE(PointCloudTestFixture<float>, "knnSearch") {
-    using PointF = Point<float>;
-    SUBCASE("All in first leaf") {
-        tt::TentacleTree<PointF> tree(4, 0.01f);
-        tree.insert(points_.begin(), points_.end());
-        tree.insert(points_.begin(), points_.end());
-        tree.insert(points_.begin(), points_.end());
-        tree.insert(points_.begin(), points_.end());
-
-        const PointF query_point{{10.0f, 10.0f, 10.0f}};
-        constexpr std::size_t k = 4;
-        auto neighbors = tree.knnSearch(query_point, k);
-        REQUIRE(neighbors.size() == k);
-        for (const auto &neighbor : neighbors) {
-            REQUIRE(neighbor.point.get().x() == doctest::Approx(1.0f));
-            REQUIRE(neighbor.point.get().y() == doctest::Approx(1.0f));
-            REQUIRE(neighbor.point.get().z() == doctest::Approx(1.0f));
-        }
-    }
-    SUBCASE("More points in leaf than k") {
-        tt::TentacleTree<PointF> tree(4, 0.01f);
-        tree.insert(points_.begin(), points_.end());
-        tree.insert(points_.begin(), points_.end());
-        tree.insert(points_.begin(), points_.end());
-        tree.insert(points_.begin(), points_.end());
-
-        const auto rec = rerun::RecordingStream("knnSearch");
-        rec.spawn().exit_on_failure();
-        rec.log("points", rerun::Points3D(toRerunPositions(points_)));
-        rec.log("tree", toRerunBoxes(tree, rerun::Color(0, 0, 255)));
-
-        const PointF query_point{{1.0f, 1.0f, 1.2f}};
-        constexpr std::size_t k = 3;
-        auto neighbors = tree.knnSearch(query_point, k);
-        REQUIRE(neighbors.size() == k);
-        for (const auto &neighbor : neighbors) {
-            REQUIRE(neighbor.point.get().x() == doctest::Approx(1.0f));
-            REQUIRE(neighbor.point.get().y() == doctest::Approx(1.0f));
-            REQUIRE(neighbor.point.get().z() == doctest::Approx(1.0f));
-        }
-    }
-}
-
 TEST_CASE("BoundedPriorityQueue::push") {
     SUBCASE("Basic push when queue is not full (max-heap)") {
         tt::impl::BoundedPriorityQueue<int> pq(std::less<int>{}, 3);
@@ -1398,6 +1357,14 @@ TEST_CASE("BoundedPriorityQueue::push") {
         pq.push(5);
         CHECK(pq.size() == 3);
         CHECK(pq.top() == 20); // 30 was removed, now 20 is largest
+
+        pq.push(10);
+        CHECK(pq.size() == 3);
+        CHECK(pq.top() == 10);
+
+        pq.push(5);
+        CHECK(pq.size() == 3);
+        CHECK(pq.top() == 10);
     }
 
     SUBCASE("Bounded behavior: pushing worse element when full") {
@@ -1560,6 +1527,49 @@ TEST_CASE("BoundedPriorityQueue::push") {
     }
 }
 
+TEST_CASE_FIXTURE(PointCloudTestFixture<float>, "KNN Search cube") {
+    using PointF = Point<float>;
+    SUBCASE("All in first leaf") {
+        tt::TentacleTree<PointF> tree(4, 0.01f);
+        tree.insert(points_.begin(), points_.end());
+        tree.insert(points_.begin(), points_.end());
+        tree.insert(points_.begin(), points_.end());
+        tree.insert(points_.begin(), points_.end());
+
+        const PointF query_point{{10.0f, 10.0f, 10.0f}};
+        constexpr std::size_t k = 4;
+        auto neighbors = tree.knnSearch(query_point, k);
+        REQUIRE(neighbors.size() == k);
+        for (const auto &neighbor : neighbors) {
+            REQUIRE(neighbor.point.get().x() == doctest::Approx(1.0f));
+            REQUIRE(neighbor.point.get().y() == doctest::Approx(1.0f));
+            REQUIRE(neighbor.point.get().z() == doctest::Approx(1.0f));
+        }
+    }
+    SUBCASE("More points in leaf than k") {
+        tt::TentacleTree<PointF> tree(4, 0.01f);
+        tree.insert(points_.begin(), points_.end());
+        tree.insert(points_.begin(), points_.end());
+        tree.insert(points_.begin(), points_.end());
+        tree.insert(points_.begin(), points_.end());
+
+        // const auto rec = rerun::RecordingStream("knnSearch");
+        // rec.spawn().exit_on_failure();
+        // rec.log("points", rerun::Points3D(toRerunPositions(points_)));
+        // rec.log("tree", toRerunBoxes(tree, rerun::Color(0, 0, 255)));
+
+        const PointF query_point{{1.0f, 1.0f, 1.2f}};
+        constexpr std::size_t k = 3;
+        auto neighbors = tree.knnSearch(query_point, k);
+        REQUIRE(neighbors.size() == k);
+        for (const auto &neighbor : neighbors) {
+            REQUIRE(neighbor.point.get().x() == doctest::Approx(1.0f));
+            REQUIRE(neighbor.point.get().y() == doctest::Approx(1.0f));
+            REQUIRE(neighbor.point.get().z() == doctest::Approx(1.0f));
+        }
+    }
+}
+
 TEST_CASE("KNN search") {
     constexpr std::size_t kBucketSize = 5;
     constexpr float kMinNodeSize = 0.1f;
@@ -1571,7 +1581,6 @@ TEST_CASE("KNN search") {
         {2, 2, 2},
         {2, 2, 2},
         {2, 2, 2},
-        {-2, 2, 2},
         {2, 2, 2},
         {2, 2, 2},
     };
@@ -1583,13 +1592,118 @@ TEST_CASE("KNN search") {
     // rec.log("points", rerun::Points3D(toRerunPositions(tree)));
     // rec.log("tree", toRerunBoxes(tree, rerun::Color(0, 0, 255)));
 
-    SUBCASE("Inside query - single") {
-        const Point<float> point{0, 0, 0};
-        auto neighbours = tree.knnSearch(point, 1);
-        CHECK(neighbours.size() == 1);
-        const auto &res = neighbours[0].point.get();
-        CHECK(res.x() == doctest::Approx(2.0));
+    SUBCASE("Growing query") {
+        // There are enough points for knnSearch to return the same point coordinates
+        const Point<float> query{3, 3, 3};
+        for (std::size_t i = 1; i < 6; ++i) {
+            auto neighbours = tree.knnSearch(query, i);
+            CHECK(neighbours.size() == i);
+            for (const auto &result : neighbours) {
+                const auto &point = result.point.get();
+                CHECK(point.x() == doctest::Approx(2.0));
+            }
+        }
     }
+    SUBCASE("Large query") {
+        const Point<float> point{3, 3, 3};
+        auto neighbours = tree.knnSearch(point, 6);
+        CHECK(neighbours.size() == 6);
+        // We expect five points at (2,2,2) and one at (10,10,10)
+        std::size_t count_222 = 0;
+        std::size_t count_101010 = 0;
+        std::size_t count_neg = 0;
+        for (const auto &nr : neighbours) {
+            const auto &pt = nr.point.get();
+            if (isClose(pt.x(), 2.0f) && isClose(pt.y(), 2.0f) && isClose(pt.z(), 2.0f)) {
+                ++count_222;
+            } else if (isClose(pt.x(), 10.0f) && isClose(pt.y(), 10.0f) && isClose(pt.z(), 10.0f)) {
+                ++count_101010;
+            } else if (isClose(pt.x(), -10.0f) && isClose(pt.y(), -10.0f) &&
+                       isClose(pt.z(), -10.0f)) {
+                ++count_neg;
+            } else {
+                // Unexpected point
+                CHECK(false);
+            }
+        }
+        CHECK(count_222 == 5);
+        CHECK(count_101010 == 1);
+        CHECK(count_neg == 0);
+    }
+    SUBCASE("All query") {
+        // Query for k larger than the tree itself
+        const Point<float> query{-11, -11, -11};
+        auto neighbours = tree.knnSearch(query, 8);
+        CHECK(neighbours.size() == 7);
+        auto &point = neighbours[0].point;
+        CHECK(isClose(point.get().x(), -10.0f));
+        for (std::size_t i = 1; i < 6; ++i) {
+            point = neighbours[i].point.get();
+            CHECK(isClose(point.get().x(), 2.0f));
+        }
+        point = neighbours[6].point;
+        CHECK(isClose(point.get().x(), 10.0f));
+    }
+}
 
-    SUBCASE("Inside query - multiple") {}
+TEST_CASE("search LUT generation") {
+    // This isn't actually a test, it serves the generation of the lookup table for searching during
+    // KNN search
+    std::array<float, 3> center = {0.0f, 0.0f, 0.0f};
+    // clang-format off
+    std::vector<Point<float>> points =
+        {{1, 1, 1},
+         {{-1, 1, 1}},
+         {{-1, -1, 1}},
+         {{1, -1, 1}},
+         {{1, 1, -1}},
+         {{-1, 1, -1}},
+         {{-1, -1, -1}},
+         {{1, -1, -1}}};
+    // clang-format on
+
+    struct CodePoint {
+        std::size_t code;
+        Point<float> point;
+    };
+    struct CodePointDistance {
+        std::size_t code;
+        Point<float> point;
+        float distance;
+    };
+    std::vector<CodePoint> codes;
+    for (const auto &point : points) {
+        auto code = tt::impl::computeMortonCode(point, center);
+        codes.push_back({code, point});
+    }
+    std::ranges::sort(codes,
+                      [](const CodePoint &a, const CodePoint &b) { return a.code < b.code; });
+    // std::ranges::for_each(codes, [](const auto &cp) {
+    //     std::cout << std::format("{} [{} {} {}]\n", cp.code, cp.point[0], cp.point[1],
+    //     cp.point[2]);
+    // });
+
+    for (std::size_t i = 0; i < 8; ++i) {
+        tt::Node<Point<float>> node{std::to_array(codes[i].point.coords), 0.5f};
+        std::vector<CodePointDistance> neighbours;
+        for (std::size_t j = 0; j < 8; ++j) {
+            if (i == j) {
+                continue;
+            }
+            neighbours.push_back({codes[j].code, codes[j].point,
+                                  tt::impl::nodeToPointDistance(node, codes[j].point)});
+        }
+        // std::ranges::for_each(neighbours, [](const auto &cpd) {
+        //     std::cout << std::format("{} [{} {} {}] - {}\n", cpd.code, cpd.point[0],
+        //     cpd.point[1],
+        //                              cpd.point[2], cpd.distance);
+        // });
+        std::ranges::sort(neighbours, [](const CodePointDistance &a, const CodePointDistance &b) {
+            return a.distance < b.distance;
+        });
+        std::cout << "{";
+        std::ranges::for_each(neighbours,
+                              [](const auto &cpd) { std::cout << std::format("{},", cpd.code); });
+        std::cout << "},\n";
+    }
 }

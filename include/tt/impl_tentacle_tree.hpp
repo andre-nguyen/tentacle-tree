@@ -396,16 +396,17 @@ Node<PointT> &findClosestLeafNode(Node<PointT> &node, const PointT &point,
     return node;
 }
 
-template <typename PointT>
+template <Point3d PointT>
 bool knnSearch(const Node<PointT> &node, const PointT &query_point, std::size_t k,
                BoundedPriorityQueue<KnnResult<PointT>> &queue) {
     // II. C. Nearest Neighbor Search
-    // I'm not sure I fully understand the paper's description of the algorithm here
+    // I'm not sure that I fully understand the paper's description of the algorithm here
     // Sounds like a depth first search of the tree following the morton code.
     // If after hitting the closest leaf we still need more neighbors, then we search the rest of
     // the nodes.
     // There is also an early exit clause with the search ball that allows us to not search other
-    // nodes.
+    // nodes. The search ball is defined as a sphere centered on the query point and of radius of
+    // the worst candidate distance.
     if (!impl::hasChildren(node)) {
         for (const auto &point : node.points) {
             KnnResult<PointT> result{point, impl::distance<PointT>(query_point, point)};
@@ -420,6 +421,23 @@ bool knnSearch(const Node<PointT> &node, const PointT &query_point, std::size_t 
         return stop_search;
     }
 
+    using FloatT = PointCoordinateTypeT<PointT>;
+    // Each entry is a sorted array of the neighboring morton codes on the index
+    // example: kSortedNeighbourLut[2] would give the sorted neighbor morton codes of the node of
+    // code '2'
+    // clang-format off
+    constexpr std::array<std::array<FloatT, 7>, 8> kSortedNeighbourLut = {
+        {
+            {1, 2, 4, 3, 5, 6, 7},
+            {0, 3, 5, 2, 4, 7, 6},
+            {0, 3, 6, 1, 4, 7, 5},
+            {1, 2, 7, 0, 5, 6, 4},
+            {0, 5, 6, 1, 2, 7, 3},
+            {1, 4, 7, 0, 3, 6, 2},
+            {2, 4, 7, 0, 3, 5, 1},
+            {3, 5, 6, 1, 2, 4, 0}
+        }};
+    // clang-format on
     // TODO: Implement sorted lookup table instead of iterating blindly
     for (std::size_t i = 0; i < 8; i++) {
         if (i == morton_code) {
@@ -442,6 +460,24 @@ bool knnSearch(const Node<PointT> &node, const PointT &query_point, std::size_t 
     //   q and the largest distance dmax in h is inside the axis-aligned
     //   box of current octant, the searching is over.
     return queue.isFull() and isSphereInNode(node, query_point, queue.top().distance);
+}
+
+template <Point3d PointT>
+PointCoordinateTypeT<PointT> nodeToPointDistance(const Node<PointT> &node, const PointT &point) {
+    // Section II. C
+    // We define the distance d between q and Ck as below:
+    // d =∥σ(|q − co | − 1eo )∥2 , (4)
+    // where 1 = (1, 1, 1)T and σ(x) = x if x > 0, otherwise
+    // σ(x) = 0. d < dmax indicates that Ck overlaps S(q, dmax ).
+    decltype(node.center) x;
+    x[0] = std::abs(node.center[0] - point[0]) - node.half_extent;
+    x[1] = std::abs(node.center[1] - point[1]) - node.half_extent;
+    x[2] = std::abs(node.center[2] - point[2]) - node.half_extent;
+    auto sigma = [](PointCoordinateTypeT<PointT> x) { return x > 0 ? x : 0; };
+    auto sq = [](PointCoordinateTypeT<PointT> x) { return x * x; };
+    auto sigma_sq = [sigma, sq](PointCoordinateTypeT<PointT> x) { return sq(sigma(x)); };
+    std::for_each(x.begin(), x.end(), sigma_sq);
+    return std::sqrt(x[0] + x[1] + x[2]);
 }
 
 } // namespace impl

@@ -9,8 +9,7 @@ namespace tt::impl {
 template <typename T, typename Compare = std::less<T>>
 class BoundedPriorityQueue {
   public:
-    BoundedPriorityQueue(Compare comp, std::size_t max_size)
-        : heap_{}, max_size_(max_size), comp_(comp) {}
+    BoundedPriorityQueue(Compare comp, std::size_t max_size);
 
     void push(const T &value);
     void pop();
@@ -20,13 +19,20 @@ class BoundedPriorityQueue {
     [[nodiscard]] bool empty() const;
 
     // Move out the internal heap vector
-    [[nodiscard]] std::vector<T> &&destructiveGet() { return std::move(heap_); }
+    [[nodiscard]] std::vector<T> &&destructiveGet();
 
   private:
     std::vector<T> heap_;
     std::size_t max_size_;
     Compare comp_;
 };
+
+template <typename T, typename Compare>
+BoundedPriorityQueue<T, Compare>::BoundedPriorityQueue(Compare comp, std::size_t max_size)
+    : heap_{}, max_size_(max_size), comp_(comp) {
+    // We add 1 element for heap management
+    heap_.reserve(max_size_ + 1);
+}
 
 template <typename T, typename Compare>
 void BoundedPriorityQueue<T, Compare>::push(const T &value) {
@@ -66,6 +72,12 @@ std::size_t BoundedPriorityQueue<T, Compare>::size() const {
 template <typename T, typename Compare>
 bool BoundedPriorityQueue<T, Compare>::empty() const {
     return heap_.empty();
+}
+
+template <typename T, typename Compare>
+std::vector<T> &&BoundedPriorityQueue<T, Compare>::destructiveGet() {
+    std::sort_heap(heap_.begin(), heap_.end(), comp_);
+    return std::move(heap_);
 }
 
 } // namespace tt::impl
