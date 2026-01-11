@@ -90,6 +90,14 @@ class TentacleTree {
     using SearchResult = std::vector<KnnResult<PointT>>;
     SearchResult knnSearch(const PointT &query_point, std::size_t k);
 
+    /**
+     * Perform a radius search where any point within @param radius will be returned.
+     * @param query_point Center of the search ball
+     * @param radius Radius of the search ball
+     * @return References to all points found. Invalid if a call to insert is done.
+     */
+    std::vector<PointT&> radiusSearch(const PointT &query_point, CoordT radius);
+
     Node<PointT> *root() const { return root_.get(); }
 
   private:

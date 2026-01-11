@@ -92,6 +92,32 @@ bool isSphereInNode(const Node<PointT> &node, const PointT &sphere_center,
     return true;
 }
 
+template <Point3d PointT>
+bool isNodeInSphere(const Node<PointT> &node, const PointT &sphere_center,
+                    typename Node<PointT>::CoordT sphere_radius) {
+    using CoordT = typename Node<PointT>::CoordT;
+    // Check all 8 corners of the node
+    for (CoordT dx : {CoordT(-1), CoordT(1)}) {
+        for (CoordT dy : {CoordT(-1), CoordT(1)}) {
+            for (CoordT dz : {CoordT(-1), CoordT(1)}) {
+                auto corner = node.center;
+                corner[0] += dx * node.half_extent;
+                corner[1] += dy * node.half_extent;
+                corner[2] += dz * node.half_extent;
+                CoordT dist2 = CoordT(0);
+                for (std::size_t i = 0; i < 3; ++i) {
+                    CoordT d = corner[i] - sphere_center[i];
+                    dist2 += d * d;
+                }
+                if (dist2 > sphere_radius * sphere_radius) {
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+}
+
 /**
  *  Compute the axis-aligned bounding box for a set of 3D points.
  */
@@ -228,11 +254,11 @@ std::unique_ptr<Node<PointT>>
 growTreeUntilAbsorption(std::unique_ptr<Node<PointT>> node,
                         const BoundingBox<PointCoordinateTypeT<PointT>> &bbox) {
     std::unique_ptr<Node<PointT>> root = std::move(node);
-    while (!isPointInNode(bbox.max_coords, *root)) {
+    while (not isPointInNode(bbox.max_coords, *root)) {
         root = makeParentAndLinkNode(std::move(root), bbox.max_coords);
     }
 
-    while (!isPointInNode(bbox.min_coords, *root)) {
+    while (not isPointInNode(bbox.min_coords, *root)) {
         root = makeParentAndLinkNode(std::move(root), bbox.min_coords);
     }
     return root;
@@ -257,7 +283,7 @@ void splitAndInsertPoints(BeginIt begin, EndIt end, Node<PointT> &node,
 
         const auto child_center =
             impl::computeOctantCenter(node.center, node.half_extent, octant_idx);
-        if (!node.children[octant_idx]) {
+        if (not node.children[octant_idx]) {
             node.children[octant_idx] =
                 std::make_unique<Node<PointT>>(child_center, child_half_extent);
         }
@@ -308,14 +334,37 @@ void insert(BeginIt begin, EndIt end, Node<PointT> &node, const std::size_t buck
     // points to various children, and only the new points are to
     // be subdivided. This process is similar to the one mentioned
     // above, except for the recursive updating of octants
+
+    // Note: I think the paper is incomplete here, and we have to take care of the case where a leaf
+    // might need to be split. A leaf might not have a minimum extent and would need to be split if
+    // the number of points inserted exceeds the bucket size
+    const auto num_points = static_cast<std::size_t>(std::distance(begin, end));
     const bool is_smallest_possible = isNodeSmallestPossible(node, min_extent);
-    const auto num_points = std::distance(begin, end);
-    const bool needs_splitting =
-        num_points > static_cast<decltype(num_points)>(bucket_size) && !is_smallest_possible;
+    if (not hasChildren(node)) {
+        const bool will_bucket_overflow = node.points.size() + num_points > bucket_size;
+        if (will_bucket_overflow and not is_smallest_possible) {
+            std::vector<PointT> new_points(begin, end);
+            new_points.insert(new_points.end(), std::make_move_iterator(node.points.begin()),
+                              std::make_move_iterator(node.points.end()));
+            node.points.clear();
+            auto octant_points = impl::distributePointsToOctants<PointT>(
+                new_points.begin(), new_points.end(), node.center);
+            for (auto &points : octant_points) {
+                splitAndInsertPoints(points.begin(), points.end(), node, bucket_size, min_extent);
+            }
+            return;
+        } else {
+            // insert directly
+            insertIntoLeaf(begin, end, node, bucket_size, num_points);
+            return;
+        }
+    }
+
+    const bool needs_splitting = num_points > bucket_size and not is_smallest_possible;
     if (needs_splitting) {
         splitAndInsertPoints(begin, end, node, bucket_size, min_extent);
     } else {
-        insertIntoLeaf(begin, end, node, bucket_size, static_cast<std::size_t>(num_points));
+        insertIntoLeaf(begin, end, node, bucket_size, num_points);
     }
 }
 
@@ -407,7 +456,7 @@ bool knnSearch(const Node<PointT> &node, const PointT &query_point, std::size_t 
     // There is also an early exit clause with the search ball that allows us to not search other
     // nodes. The search ball is defined as a sphere centered on the query point and of radius of
     // the worst candidate distance.
-    if (!impl::hasChildren(node)) {
+    if (not impl::hasChildren(node)) {
         for (const auto &point : node.points) {
             KnnResult<PointT> result{point, impl::distance<PointT>(query_point, point)};
             queue.push(result);
@@ -475,6 +524,10 @@ PointCoordinateTypeT<PointT> nodeToPointDistance(const Node<PointT> &node, const
     return std::sqrt(x[0] + x[1] + x[2]);
 }
 
+template <Point3d PointT>
+void radiusSearch(const Node<PointT> &node, const PointT &query_point,
+                  PointCoordinateTypeT<PointT> radius, std::vector<PointT &> points_found) {}
+
 } // namespace impl
 
 template <Point3d PointT>
@@ -484,7 +537,7 @@ TentacleTree<PointT>::TentacleTree(std::size_t bucket_size, CoordT min_extent)
 template <Point3d PointT>
 template <std::random_access_iterator BeginIt, std::random_access_iterator EndIt>
 void TentacleTree<PointT>::insert(BeginIt begin, EndIt end) {
-    if (!root_) {
+    if (not root_) {
         init(begin, end);
         return;
     }
@@ -539,7 +592,7 @@ std::unique_ptr<Node<PointT>> TentacleTree<PointT>::createNode(const std::array<
     auto node = std::make_unique<Node<PointT>>(center, half_extent);
     const auto num_points = static_cast<std::size_t>(std::distance(begin, end));
     const bool is_node_smallest_possible = impl::isNodeSmallestPossible(*node, min_extent_);
-    bool keep_splitting = num_points > bucket_size_ && !is_node_smallest_possible;
+    const bool keep_splitting = num_points > bucket_size_ and not is_node_smallest_possible;
     if (keep_splitting) {
         auto octant_points = impl::distributePointsToOctants<PointT>(begin, end, center);
         CoordT child_half_extent = half_extent * CoordT(0.5);
@@ -574,7 +627,7 @@ std::unique_ptr<Node<PointT>> TentacleTree<PointT>::boxDelete(const BoundingBox<
     }
 
     if (impl::isBoxOverlappingNode(box, *node)) {
-        const bool is_leaf = !impl::hasChildren(*node);
+        const bool is_leaf = not impl::hasChildren(*node);
         if (is_leaf) {
             return nullptr;
         }
@@ -595,6 +648,13 @@ TentacleTree<PointT>::SearchResult TentacleTree<PointT>::knnSearch(const PointT 
     impl::BoundedPriorityQueue<KnnResult<PointT>> queue(std::less<KnnResult<PointT>>(), k);
     impl::knnSearch(*root_, query_point, k, queue);
     return queue.destructiveGet();
+}
+
+template <Point3d PointT>
+std::vector<PointT &> TentacleTree<PointT>::radiusSearch(const PointT &query_point, CoordT radius) {
+    std::vector<PointT &> points;
+    impl::radiusSearch(*root_, query_point, radius, points);
+    return points;
 }
 
 } // namespace tt

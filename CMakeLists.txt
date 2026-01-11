@@ -49,6 +49,10 @@ target_compile_options(tentacle-tree
 include(doctest)
 add_executable(tentacle-tree-test
     tests/tests.cpp
+    tests/indexed_view.cpp
+        tests/impl.cpp
+        tests/point.h
+        tests/rerun.h
 )
 target_link_libraries(tentacle-tree-test
     PRIVATE
