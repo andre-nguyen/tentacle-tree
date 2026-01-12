@@ -1,6 +1,8 @@
 #ifndef TESTS_POINT_H
 #define TESTS_POINT_H
 
+#include <cstdint>
+
 template <typename FloatT>
 struct Point {
     using Float = FloatT;

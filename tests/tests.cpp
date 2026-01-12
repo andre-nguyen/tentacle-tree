@@ -1429,3 +1429,41 @@ TEST_CASE("search LUT generation") {
     }
     std::cout << "}\n";
 }
+
+// #include "tt/impl/asc_io.hpp"
+// TEST_CASE("load asc") {
+//     auto cloud = tt::loadASC<float>("matterhorn.asc");
+//     const auto rec = rerun::RecordingStream("load asc");
+//     rec.spawn().exit_on_failure();
+//     rec.set_time_sequence("time", 0);
+//
+//     {
+//         std::vector<rerun::Position3D> positions;
+//         positions.reserve(cloud.coords.size());
+//         std::ranges::transform(cloud.coords, std::back_inserter(positions),
+//                                [](const std::array<float, 3> &point) {
+//                                    return rerun::Position3D{point[0], point[1], point[2]};
+//                                });
+//         std::vector<rerun::Color> colors;
+//         colors.reserve(cloud.colors.size());
+//         std::ranges::transform(cloud.colors, std::back_inserter(colors),
+//                                [](const std::array<std::uint8_t, 3> &color) {
+//                                    return rerun::Color{color[0], color[1], color[2]};
+//                                });
+//
+//         auto rerun_points = rerun::Points3D().with_positions(positions).with_colors(colors);
+//         rec.log("points", rerun_points);
+//     }
+//
+//     std::vector<Point<float>> points;
+//     points.reserve(cloud.coords.size());
+//     std::ranges::transform(cloud.coords, std::back_inserter(points),
+//                            [](const std::array<float, 3> &point) {
+//                                return Point<float>{point[0], point[1], point[2]};
+//                            });
+//     tt::TentacleTree<Point<float>> tree(10, 10);
+//     tree.insert(points.begin(), points.end());
+//
+//     rec.set_time_sequence("time", 1);
+//     rec.log("tree", toRerunBoxes(*tree.root()));
+// }
