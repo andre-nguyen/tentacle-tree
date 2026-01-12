@@ -1206,6 +1206,171 @@ TEST_CASE("KNN search") {
     }
 }
 
+TEST_CASE("radius search") {
+    using PointF = Point<float>;
+
+    SUBCASE("Empty tree") {
+        tt::TentacleTree<PointF> tree(5, 0.01f);
+        const PointF query_point{{0.0f, 0.0f, 0.0f}};
+        auto results = tree.radiusSearch(query_point, 5.0f);
+        CHECK(results.empty());
+    }
+
+    SUBCASE("Single point within radius") {
+        tt::TentacleTree<PointF> tree(5, 0.01f);
+        std::vector<PointF> points = {{{1.0f, 0.0f, 0.0f}}};
+        tree.insert(points.begin(), points.end());
+
+        const PointF query_point{{0.0f, 0.0f, 0.0f}};
+        auto results = tree.radiusSearch(query_point, 2.0f);
+        CHECK(results.size() == 1);
+        CHECK(isClose(results[0].get().x(), 1.0f));
+    }
+
+    SUBCASE("Single point outside radius") {
+        tt::TentacleTree<PointF> tree(5, 0.01f);
+        std::vector<PointF> points = {{{10.0f, 0.0f, 0.0f}}};
+        tree.insert(points.begin(), points.end());
+
+        const PointF query_point{{0.0f, 0.0f, 0.0f}};
+        auto results = tree.radiusSearch(query_point, 2.0f);
+        CHECK(results.empty());
+    }
+
+    SUBCASE("Multiple points, some within radius") {
+        tt::TentacleTree<PointF> tree(1, 0.01f);
+        std::vector<PointF> points = {
+            {{1.0f, 0.0f, 0.0f}}, // distance 1
+            {{0.0f, 1.5f, 0.0f}}, // distance 1.5
+            {{0.0f, 0.0f, 2.5f}}, // distance 2.5
+            {{5.0f, 0.0f, 0.0f}}, // distance 5
+            {{10.0f, 0.0f, 0.0f}} // distance 10
+        };
+        tree.insert(points.begin(), points.end());
+
+        const PointF query_point{{0.0f, 0.0f, 0.0f}};
+        auto results = tree.radiusSearch(query_point, 3.0f);
+
+        // Should find points at distances 1, 1.5, and 2.5
+        CHECK(results.size() == 3);
+
+        // Check that all returned points are within radius
+        for (const auto &result : results) {
+            float dist = std::sqrt(result.get().x() * result.get().x() +
+                                   result.get().y() * result.get().y() +
+                                   result.get().z() * result.get().z());
+            CHECK(dist < 3.0f);
+        }
+
+        // const auto rec = rerun::RecordingStream("radius_search multiple");
+        // rec.spawn().exit_on_failure();
+
+        // rec.set_time_sequence("time", 0);
+        // rec.log("points", rerun::Points3D(toRerunPositions(points)));
+        // rec.log("tree", toRerunBoxes(*tree.root()));
+        // rec.log("search_ball", rerun::Ellipsoids3D::from_centers_and_half_sizes(
+        //                            {{0.0f, 0.0f, 0.0f}}, {{3, 3, 3}}));
+        // rec.set_time_sequence("time", 1);
+        // std::vector<Point<float>> copies;
+        // std::ranges::transform(results, std::back_inserter(copies),
+        //                        [](const auto &ref) { return ref.get(); });
+        // rec.log("points_found", rerun::Points3D(toRerunPositions(copies)));
+    }
+
+    SUBCASE("Points in different octants") {
+        tt::TentacleTree<PointF> tree(1, 0.01f);
+        std::vector<PointF> points = {{{1.0f, 1.0f, 1.0f}},    {{-1.0f, 1.0f, 1.0f}},
+                                      {{-1.0f, -1.0f, 1.0f}},  {{1.0f, -1.0f, 1.0f}},
+                                      {{1.0f, 1.0f, -1.0f}},   {{-1.0f, 1.0f, -1.0f}},
+                                      {{-1.0f, -1.0f, -1.0f}}, {{1.0f, -1.0f, -1.0f}}};
+        tree.insert(points.begin(), points.end());
+
+        const PointF query_point{{0.0f, 0.0f, 0.0f}};
+        // All points are at distance sqrt(3) ≈ 1.732
+        auto results = tree.radiusSearch(query_point, 2.0f);
+        CHECK(results.size() == 8);
+
+        // Check with smaller radius
+        results = tree.radiusSearch(query_point, 1.5f);
+        CHECK(results.empty());
+
+        // const auto rec = rerun::RecordingStream("radius_search different octants");
+        // rec.spawn().exit_on_failure();
+        // rec.set_time_sequence("time", 0);
+        // rec.log("points", rerun::Points3D(toRerunPositions(points)));
+        // rec.log("tree", toRerunBoxes(*tree.root()));
+        // rec.log("search_ball", rerun::Ellipsoids3D::from_centers_and_half_sizes(
+        //                            {{0.0f, 0.0f, 0.0f}}, {{3, 3, 3}}));
+        // rec.set_time_sequence("time", 1);
+        // std::vector<Point<float>> copies;
+        // std::ranges::transform(results, std::back_inserter(copies),
+        //                        [](const auto &ref) { return ref.get(); });
+        // rec.log("points_found", rerun::Points3D(toRerunPositions(copies)));
+    }
+
+    SUBCASE("Query point not at origin") {
+        tt::TentacleTree<PointF> tree(1, 0.01f);
+        std::vector<PointF> points = {{{5.0f, 5.0f, 5.0f}},
+                                      {{6.0f, 5.0f, 5.0f}},
+                                      {{5.0f, 6.0f, 5.0f}},
+                                      {{5.0f, 5.0f, 6.0f}},
+                                      {{10.0f, 5.0f, 5.0f}}};
+        tree.insert(points.begin(), points.end());
+
+        const PointF query_point{{5.0f, 5.0f, 5.0f}};
+        auto results = tree.radiusSearch(query_point, 1.5f);
+
+        // Should find 4 points (the center and the 3 neighbors at distance 1)
+        CHECK(results.size() == 4);
+    }
+
+    SUBCASE("Large point cloud with small radius") {
+        tt::TentacleTree<PointF> tree(1, 0.01f);
+        std::vector<PointF> points;
+
+        // Create a grid of points
+        for (int x = -5; x <= 5; ++x) {
+            for (int y = -5; y <= 5; ++y) {
+                for (int z = -5; z <= 5; ++z) {
+                    points.push_back(
+                        {{static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)}});
+                }
+            }
+        }
+        tree.insert(points.begin(), points.end());
+
+        const PointF query_point{{0.0f, 0.0f, 0.0f}};
+        auto results = tree.radiusSearch(query_point, 1.5f);
+
+        // With radius 1.5, we can find:
+        // - center (0,0,0) at distance 0
+        // - 6 face neighbors at distance 1
+        // - 12 edge neighbors at distance sqrt(2) ≈ 1.414
+        // Total: up to 19 points
+        CHECK(results.size() >= 1);
+        CHECK(results.size() <= 19);
+
+        // Verify all results are within radius
+        for (const auto &result : results) {
+            float dist = std::sqrt(result.get().x() * result.get().x() +
+                                   result.get().y() * result.get().y() +
+                                   result.get().z() * result.get().z());
+            CHECK(dist < 1.5f);
+        }
+    }
+
+    SUBCASE("Zero radius") {
+        tt::TentacleTree<PointF> tree(5, 0.01f);
+        std::vector<PointF> points = {{{0.0f, 0.0f, 0.0f}}, {{1.0f, 0.0f, 0.0f}}};
+        tree.insert(points.begin(), points.end());
+
+        const PointF query_point{{0.0f, 0.0f, 0.0f}};
+        auto results = tree.radiusSearch(query_point, 0.0f);
+        // With zero radius, should not find anything (strict inequality)
+        CHECK(results.empty());
+    }
+}
+
 TEST_CASE("search LUT generation") {
     // This isn't actually a test, it serves the generation of the lookup table for searching during
     // KNN search

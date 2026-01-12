@@ -96,7 +96,8 @@ class TentacleTree {
      * @param radius Radius of the search ball
      * @return References to all points found. Invalid if a call to insert is done.
      */
-    std::vector<PointT&> radiusSearch(const PointT &query_point, CoordT radius);
+    std::vector<std::reference_wrapper<const PointT>> radiusSearch(const PointT &query_point,
+                                                                   CoordT radius);
 
     Node<PointT> *root() const { return root_.get(); }
 

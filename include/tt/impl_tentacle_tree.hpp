@@ -118,6 +118,33 @@ bool isNodeInSphere(const Node<PointT> &node, const PointT &sphere_center,
     return true;
 }
 
+template <Point3d PointT>
+bool isPointInSphere(const PointT &point, const PointT &sphere_center,
+                     PointCoordinateTypeT<PointT> sphere_radius) {
+    using Value = PointCoordinateTypeT<PointT>;
+    Value x = point.x() - sphere_center.x();
+    Value y = point.y() - sphere_center.y();
+    Value z = point.z() - sphere_center.z();
+    PointCoordinateTypeT<PointT> sum_squared = x * x + y * y + z * z;
+    return sum_squared < sphere_radius * sphere_radius;
+}
+
+template <Point3d PointT>
+bool doesNodeOverlapSphere(const Node<PointT> &node, const PointT &sphere_center,
+                           PointCoordinateTypeT<PointT> sphere_radius) {
+    using CoordT = PointCoordinateTypeT<PointT>;
+    CoordT dist2 = CoordT(0);
+    for (std::size_t i = 0; i < 3; ++i) {
+        CoordT node_min = node.center[i] - node.half_extent;
+        CoordT node_max = node.center[i] + node.half_extent;
+        CoordT c = sphere_center[i];
+        CoordT closest = std::clamp(c, node_min, node_max);
+        CoordT d = closest - c;
+        dist2 += d * d;
+    }
+    return dist2 < sphere_radius * sphere_radius;
+}
+
 /**
  *  Compute the axis-aligned bounding box for a set of 3D points.
  */
@@ -526,8 +553,34 @@ PointCoordinateTypeT<PointT> nodeToPointDistance(const Node<PointT> &node, const
 
 template <Point3d PointT>
 void radiusSearch(const Node<PointT> &node, const PointT &query_point,
-                  PointCoordinateTypeT<PointT> radius, std::vector<PointT &> points_found) {}
+                  PointCoordinateTypeT<PointT> radius,
+                  std::vector<std::reference_wrapper<const PointT>> &points_found) {
+    // Follow the original Behley paper Algorithm 1
 
+    if (not hasChildren(node)) {
+        // Note, Behley checks if the node is fully in the sphere outside the checking if it's a
+        // leaf. Seems like I can't do that because a node could be in the sphere but have the
+        // points in the children.
+        if (isNodeInSphere(node, query_point, radius)) {
+            std::ranges::transform(node.points, std::back_inserter(points_found),
+                                   [](const PointT &point) { return std::cref(point); });
+            return;
+        }
+
+        for (const auto &point : node.points) {
+            if (isPointInSphere(point, query_point, radius)) {
+                points_found.push_back(std::cref(point));
+            }
+        }
+        return;
+    }
+
+    for (const auto &child : node.children) {
+        if (child && doesNodeOverlapSphere(*child, query_point, radius)) {
+            radiusSearch(*child, query_point, radius, points_found);
+        }
+    }
+}
 } // namespace impl
 
 template <Point3d PointT>
@@ -651,9 +704,12 @@ TentacleTree<PointT>::SearchResult TentacleTree<PointT>::knnSearch(const PointT 
 }
 
 template <Point3d PointT>
-std::vector<PointT &> TentacleTree<PointT>::radiusSearch(const PointT &query_point, CoordT radius) {
-    std::vector<PointT &> points;
-    impl::radiusSearch(*root_, query_point, radius, points);
+std::vector<std::reference_wrapper<const PointT>>
+TentacleTree<PointT>::radiusSearch(const PointT &query_point, CoordT radius) {
+    std::vector<std::reference_wrapper<const PointT>> points;
+    if (root_) {
+        impl::radiusSearch(*root_, query_point, radius, points);
+    }
     return points;
 }
 

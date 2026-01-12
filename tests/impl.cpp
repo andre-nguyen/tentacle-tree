@@ -429,3 +429,96 @@ TEST_CASE("isNodeInSphere") {
         CHECK_FALSE(isNodeInSphere(node, sphere_center, sphere_radius - 0.01f));
     }
 }
+
+TEST_CASE("isPointInSphere") {
+    using tt::impl::isPointInSphere;
+    using Point = Point<float>;
+
+    SUBCASE("Point inside sphere") {
+        Point center = {0.0f, 0.0f, 0.0f};
+        float radius = 2.0f;
+        Point p = {1.0f, 1.0f, 0.0f};
+        CHECK(isPointInSphere(p, center, radius));
+    }
+    SUBCASE("Point on surface of sphere") {
+        Point center = {0.0f, 0.0f, 0.0f};
+        float radius = 1.0f;
+        Point p = {1.0f, 0.0f, 0.0f};
+        CHECK_FALSE(isPointInSphere(p, center, radius));
+    }
+    SUBCASE("Point outside sphere") {
+        Point center = {0.0f, 0.0f, 0.0f};
+        float radius = 1.0f;
+        Point p = {2.0f, 0.0f, 0.0f};
+        CHECK_FALSE(isPointInSphere(p, center, radius));
+    }
+    SUBCASE("Point inside sphere with offset center") {
+        Point center = {1.0f, 2.0f, 3.0f};
+        float radius = 5.0f;
+        Point p = {2.0f, 3.0f, 4.0f};
+        CHECK(isPointInSphere(p, center, radius));
+    }
+    SUBCASE("Point far from sphere center") {
+        Point center = {0.0f, 0.0f, 0.0f};
+        float radius = 1.0f;
+        Point p = {100.0f, 100.0f, 100.0f};
+        CHECK_FALSE(isPointInSphere(p, center, radius));
+    }
+}
+
+TEST_CASE("doesNodeOverlapSphere") {
+    using tt::Node;
+    using tt::impl::doesNodeOverlapSphere;
+    using Point = Point<float>;
+
+    SUBCASE("Node fully inside sphere") {
+        Node<Point> node;
+        node.center = {0.0f, 0.0f, 0.0f};
+        node.half_extent = 1.0f;
+        Point sphere_center = {0.0f, 0.0f, 0.0f};
+        float sphere_radius = 5.0f;
+        CHECK(doesNodeOverlapSphere(node, sphere_center, sphere_radius));
+    }
+    SUBCASE("Node fully outside sphere") {
+        Node<Point> node;
+        node.center = {10.0f, 10.0f, 10.0f};
+        node.half_extent = 1.0f;
+        Point sphere_center = {0.0f, 0.0f, 0.0f};
+        float sphere_radius = 5.0f;
+        CHECK_FALSE(doesNodeOverlapSphere(node, sphere_center, sphere_radius));
+    }
+    SUBCASE("Node partially overlapping sphere") {
+        Node<Point> node;
+        node.center = {2.0f, 0.0f, 0.0f};
+        node.half_extent = 2.0f;
+        Point sphere_center = {0.0f, 0.0f, 0.0f};
+        float sphere_radius = 2.5f;
+        CHECK(doesNodeOverlapSphere(node, sphere_center, sphere_radius));
+    }
+    SUBCASE("Node just touching sphere surface") {
+        Node<Point> node;
+        node.center = {3.0f, 0.0f, 0.0f};
+        node.half_extent = 1.0f;
+        Point sphere_center = {0.0f, 0.0f, 0.0f};
+        float sphere_radius = 2.0f;
+        // Node's closest face is at x=2, sphere at x=2, so just touching
+        CHECK_FALSE(doesNodeOverlapSphere(node, sphere_center, sphere_radius));
+    }
+    SUBCASE("Node just outside sphere surface") {
+        Node<Point> node;
+        node.center = {3.1f, 0.0f, 0.0f};
+        node.half_extent = 1.0f;
+        Point sphere_center = {0.0f, 0.0f, 0.0f};
+        float sphere_radius = 2.0f;
+        // Node's closest face is at x=2.1, sphere at x=2, so not overlapping
+        CHECK_FALSE(doesNodeOverlapSphere(node, sphere_center, sphere_radius));
+    }
+    SUBCASE("Node overlaps with offset sphere") {
+        Node<Point> node;
+        node.center = {5.0f, 5.0f, 5.0f};
+        node.half_extent = 2.0f;
+        Point sphere_center = {7.0f, 7.0f, 7.0f};
+        float sphere_radius = 2.5f;
+        CHECK(doesNodeOverlapSphere(node, sphere_center, sphere_radius));
+    }
+}
