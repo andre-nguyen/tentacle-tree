@@ -75,4 +75,5 @@ target_link_libraries(tentacle-tree-benchmark
         tentacle-tree
         benchmark::benchmark
         benchmark::benchmark_main
+        rerun_sdk
 )

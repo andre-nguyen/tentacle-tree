@@ -1,6 +1,12 @@
 #ifndef TESTS_RERUN_H
 #define TESTS_RERUN_H
 
+#include "point.h"
+#include "tt/tentacle_tree.hpp"
+#include <numeric>
+#include <rerun.hpp>
+#include <vector>
+
 template <typename FloatT>
 std::vector<rerun::Position3D> toRerunPositions(const std::vector<Point<FloatT>> &points) {
     std::vector<rerun::Position3D> rr_positions;
