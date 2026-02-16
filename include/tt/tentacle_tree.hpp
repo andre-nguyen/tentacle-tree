@@ -6,6 +6,8 @@
 #include <memory>
 #include <vector>
 
+#include <boost/pool/pool_alloc.hpp>
+
 namespace tt {
 
 using Array3f = std::array<float, 3>;
@@ -44,8 +46,9 @@ struct PointCoordinateType {
 template <typename T>
 using PointCoordinateTypeT = typename PointCoordinateType<T>::Type;
 
-template <Point3d PointT>
+template <Point3d PointT, typename Allocator = std::allocator<PointT>>
 struct Node {
+    using allocator_type = Allocator;
     using CoordT = PointCoordinateTypeT<PointT>;
 
     std::array<CoordT, 3> center; // aka c_o
@@ -55,12 +58,16 @@ struct Node {
     // boost::static_vector
     std::array<std::unique_ptr<Node>, 8>
         children;               // Paper says pointer to fist child, but vector is easier to manage
-    std::vector<PointT> points; // ?? Paper mentions coordinates AND indices?
+    std::vector<PointT, Allocator> points; // ?? Paper mentions coordinates AND indices?
 
     Node() : center{CoordT(0), CoordT(0), CoordT(0)}, half_extent(CoordT(0)) {}
 
     Node(const std::array<CoordT, 3> &center_, CoordT half_extent_)
         : center(center_), half_extent(half_extent_) {}
+
+    explicit Node(const std::array<CoordT, 3> &center_, CoordT half_extent_,
+                  const Allocator &alloc)
+        : center(center_), half_extent(half_extent_), points(alloc) {}
 };
 
 template <Point3d PointT>
@@ -75,12 +82,14 @@ bool operator<(const KnnResult<PointT> &a, const KnnResult<PointT> &b) {
     return a.distance < b.distance;
 }
 
-template <Point3d PointT>
+template <Point3d PointT, typename Allocator = std::allocator<PointT>>
 class TentacleTree {
+  public:
+    using allocator_type = Allocator;
   public:
     using CoordT = PointCoordinateTypeT<PointT>;
 
-    TentacleTree(std::size_t bucket_size, CoordT min_extent);
+    TentacleTree(std::size_t bucket_size, CoordT min_extent, const Allocator &alloc = Allocator());
 
     template <std::random_access_iterator BeginIt, std::random_access_iterator EndIt>
     void insert(BeginIt begin, EndIt end);
@@ -99,23 +108,23 @@ class TentacleTree {
     std::vector<std::reference_wrapper<const PointT>> radiusSearch(const PointT &query_point,
                                                                    CoordT radius);
 
-    Node<PointT> *root() const { return root_.get(); }
+    Node<PointT, Allocator> *root() const { return root_.get(); }
 
   private:
     std::size_t bucket_size_;
     CoordT min_extent_; // aka e_min
-
-    std::unique_ptr<Node<PointT>> root_;
+    Allocator allocator_;
+    std::unique_ptr<Node<PointT, Allocator>> root_;
 
     template <std::random_access_iterator BeginIt, std::random_access_iterator EndIt>
     void init(BeginIt begin, EndIt end);
 
     template <std::random_access_iterator BeginIt, std::random_access_iterator EndIt>
-    std::unique_ptr<Node<PointT>> createNode(const std::array<CoordT, 3> &center,
+    std::unique_ptr<Node<PointT, Allocator>> createNode(const std::array<CoordT, 3> &center,
                                              CoordT half_extent, BeginIt begin, EndIt end);
 
-    std::unique_ptr<Node<PointT>> boxDelete(const BoundingBox<CoordT> &box,
-                                            std::unique_ptr<Node<PointT>> node);
+    std::unique_ptr<Node<PointT, Allocator>> boxDelete(const BoundingBox<CoordT> &box,
+                                                       std::unique_ptr<Node<PointT, Allocator>> node);
 };
 
 } // namespace tt

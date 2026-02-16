@@ -182,7 +182,7 @@ TEST_CASE("distributePointsToOctants") {
         };
 
         auto octant_points =
-            tt::impl::distributePointsToOctants<Point<float>>(points.begin(), points.end(), center);
+            tt::impl::distributePointsToOctants<Point<float>, std::allocator<Point<float>>>(points.begin(), points.end(), center);
 
         // Check that each octant has exactly one point
         CHECK(octant_points[0].size() == 1);
@@ -244,7 +244,7 @@ TEST_CASE("distributePointsToOctants") {
         };
 
         auto octant_points =
-            tt::impl::distributePointsToOctants<Point<float>>(points.begin(), points.end(), center);
+            tt::impl::distributePointsToOctants<Point<float>, std::allocator<Point<float>>>(points.begin(), points.end(), center);
 
         // Check that each octant has exactly one point
         for (std::size_t i = 0; i < 8; ++i) {
@@ -274,7 +274,7 @@ TEST_CASE("distributePointsToOctants") {
         };
 
         auto octant_points =
-            tt::impl::distributePointsToOctants<Point<float>>(points.begin(), points.end(), center);
+            tt::impl::distributePointsToOctants<Point<float>, std::allocator<Point<float>>>(points.begin(), points.end(), center);
 
         // Check that octant 7 has 3 points
         CHECK(octant_points[7].size() == 3);
@@ -294,7 +294,7 @@ TEST_CASE("distributePointsToOctants") {
         std::vector<Point<float>> points;
 
         auto octant_points =
-            tt::impl::distributePointsToOctants<Point<float>>(points.begin(), points.end(), center);
+            tt::impl::distributePointsToOctants<Point<float>, std::allocator<Point<float>>>(points.begin(), points.end(), center);
 
         // All octants should be empty
         for (std::size_t i = 0; i < 8; ++i) {
@@ -313,7 +313,7 @@ TEST_CASE("distributePointsToOctants") {
         };
 
         auto octant_points =
-            tt::impl::distributePointsToOctants<Point<float>>(points.begin(), points.end(), center);
+            tt::impl::distributePointsToOctants<Point<float>, std::allocator<Point<float>>>(points.begin(), points.end(), center);
 
         // Point at center should be in octant 0
         CHECK(octant_points[0].size() == 1);
