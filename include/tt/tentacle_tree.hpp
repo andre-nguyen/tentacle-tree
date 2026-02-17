@@ -2,7 +2,6 @@
 #define TT_TENTACLE_TREE_HPP
 
 #include <concepts>
-#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -57,7 +56,7 @@ struct Node {
     // Note both vectors are actually contrained on the max size, so we could feasibly use
     // boost::static_vector
     std::array<std::unique_ptr<Node>, 8>
-        children;               // Paper says pointer to fist child, but vector is easier to manage
+        children; // Paper says pointer to fist child, but vector is easier to manage
     std::vector<PointT, Allocator> points; // ?? Paper mentions coordinates AND indices?
 
     Node() : center{CoordT(0), CoordT(0), CoordT(0)}, half_extent(CoordT(0)) {}
@@ -65,8 +64,7 @@ struct Node {
     Node(const std::array<CoordT, 3> &center_, CoordT half_extent_)
         : center(center_), half_extent(half_extent_) {}
 
-    explicit Node(const std::array<CoordT, 3> &center_, CoordT half_extent_,
-                  const Allocator &alloc)
+    explicit Node(const std::array<CoordT, 3> &center_, CoordT half_extent_, const Allocator &alloc)
         : center(center_), half_extent(half_extent_), points(alloc) {}
 };
 
@@ -86,6 +84,7 @@ template <Point3d PointT, typename Allocator = std::allocator<PointT>>
 class TentacleTree {
   public:
     using allocator_type = Allocator;
+
   public:
     using CoordT = PointCoordinateTypeT<PointT>;
 
@@ -120,11 +119,11 @@ class TentacleTree {
     void init(BeginIt begin, EndIt end);
 
     template <std::random_access_iterator BeginIt, std::random_access_iterator EndIt>
-    std::unique_ptr<Node<PointT, Allocator>> createNode(const std::array<CoordT, 3> &center,
-                                             CoordT half_extent, BeginIt begin, EndIt end);
+    std::unique_ptr<Node<PointT, Allocator>>
+    createNode(const std::array<CoordT, 3> &center, CoordT half_extent, BeginIt begin, EndIt end);
 
-    std::unique_ptr<Node<PointT, Allocator>> boxDelete(const BoundingBox<CoordT> &box,
-                                                       std::unique_ptr<Node<PointT, Allocator>> node);
+    std::unique_ptr<Node<PointT, Allocator>>
+    boxDelete(const BoundingBox<CoordT> &box, std::unique_ptr<Node<PointT, Allocator>> node);
 };
 
 } // namespace tt

@@ -3,6 +3,7 @@
   "dependencies": [
     "benchmark",
     "doctest",
+    "boost-pool",
     "rerun-sdk"
   ]
 }
