@@ -109,6 +109,8 @@ class TentacleTree {
 
     Node<PointT, Allocator> *root() const { return root_.get(); }
 
+    const Allocator &allocator() const { return allocator_; }
+
   private:
     std::size_t bucket_size_;
     CoordT min_extent_; // aka e_min

@@ -60,6 +60,8 @@ add_executable(tentacle-tree-test
         tests/impl.cpp
         tests/point.h
         tests/rerun.h
+        tests/allocator.cpp
+        tests/alloc_helpers.h
 )
 target_link_libraries(tentacle-tree-test
         PRIVATE
@@ -78,6 +80,19 @@ add_executable(tentacle-tree-benchmark
         tests/benchmark.cpp
 )
 target_link_libraries(tentacle-tree-benchmark
+        PRIVATE
+        tentacle-tree
+        benchmark::benchmark
+        benchmark::benchmark_main
+        rerun_sdk
+        Boost::pool
+)
+
+add_executable(tentacle-tree-benchmark-allocators
+        tests/benchmark_allocators.cpp
+        tests/alloc_helpers.h
+)
+target_link_libraries(tentacle-tree-benchmark-allocators
         PRIVATE
         tentacle-tree
         benchmark::benchmark
