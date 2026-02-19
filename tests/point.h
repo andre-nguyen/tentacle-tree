@@ -1,6 +1,7 @@
 #ifndef TESTS_POINT_H
 #define TESTS_POINT_H
 
+#include <array>
 #include <cstdint>
 
 template <typename FloatT>
@@ -13,6 +14,10 @@ struct Point {
     [[nodiscard]] FloatT operator[](std::size_t idx) const { return coords[idx]; }
     [[nodiscard]] FloatT &operator[](std::size_t idx) { return coords[idx]; }
     FloatT coords[3];
+
+    Point() : coords{0, 0, 0} {}
+    Point(FloatT x, FloatT y, FloatT z) : coords{x, y, z} {}
+    Point(const std::array<FloatT, 3> &c) : coords{c[0], c[1], c[2]} {}
 
     Point<FloatT> &operator+=(const Point<FloatT> &other) {
         coords[0] += other.coords[0];

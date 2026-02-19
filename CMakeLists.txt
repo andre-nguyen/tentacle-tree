@@ -13,6 +13,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(benchmark CONFIG REQUIRED)
 find_package(doctest CONFIG REQUIRED)
 find_package(rerun_sdk CONFIG REQUIRED)
+find_package(Boost CONFIG REQUIRED COMPONENTS pool)
 
 set(COMPILE_OPTIONS
         -Wall
@@ -46,6 +47,10 @@ target_compile_options(tentacle-tree
         PRIVATE
         ${COMPILE_OPTIONS}
 )
+target_link_libraries(tentacle-tree
+    PUBLIC
+        Boost::pool
+)
 
 include(doctest)
 enable_testing()
@@ -55,12 +60,15 @@ add_executable(tentacle-tree-test
         tests/impl.cpp
         tests/point.h
         tests/rerun.h
+        tests/allocator.cpp
+        tests/alloc_helpers.h
 )
 target_link_libraries(tentacle-tree-test
         PRIVATE
         tentacle-tree
         doctest::doctest
         rerun_sdk
+        Boost::pool
 )
 target_compile_options(tentacle-tree-test
         PRIVATE
@@ -77,4 +85,18 @@ target_link_libraries(tentacle-tree-benchmark
         benchmark::benchmark
         benchmark::benchmark_main
         rerun_sdk
+        Boost::pool
+)
+
+add_executable(tentacle-tree-benchmark-allocators
+        tests/benchmark_allocators.cpp
+        tests/alloc_helpers.h
+)
+target_link_libraries(tentacle-tree-benchmark-allocators
+        PRIVATE
+        tentacle-tree
+        benchmark::benchmark
+        benchmark::benchmark_main
+        rerun_sdk
+        Boost::pool
 )
