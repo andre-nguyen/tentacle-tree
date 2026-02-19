@@ -48,6 +48,7 @@ target_compile_options(tentacle-tree
 )
 
 include(doctest)
+enable_testing()
 add_executable(tentacle-tree-test
         tests/tests.cpp
         tests/indexed_view.cpp
