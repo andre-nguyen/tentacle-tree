@@ -14,6 +14,8 @@ find_package(benchmark CONFIG REQUIRED)
 find_package(doctest CONFIG REQUIRED)
 find_package(rerun_sdk CONFIG REQUIRED)
 
+include(CTest)
+
 set(COMPILE_OPTIONS
         -Wall
         -Wextra
