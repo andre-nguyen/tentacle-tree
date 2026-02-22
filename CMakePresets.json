@@ -26,5 +26,29 @@
                 "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
             }
         }
+        ,
+        {
+            "name": "ninja-multiconfig",
+            "displayName": "Ninja Multi-Config",
+            "generator": "Ninja Multi-Config",
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "cacheVariables": {
+                "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+                "CMAKE_CONFIGURATION_TYPES": "Debug;Release"
+            }
+        }
+    ]
+    ,
+    "buildPresets": [
+        {
+            "name": "ninja-multiconfig-Debug",
+            "configurePreset": "ninja-multiconfig",
+            "configuration": "Debug"
+        },
+        {
+            "name": "ninja-multiconfig-Release",
+            "configurePreset": "ninja-multiconfig",
+            "configuration": "Release"
+        }
     ]
 }
