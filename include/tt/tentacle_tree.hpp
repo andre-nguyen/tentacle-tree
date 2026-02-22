@@ -104,6 +104,7 @@ class TentacleTree {
   private:
     std::size_t bucket_size_;
     CoordT min_extent_; // aka e_min
+    bool enable_downsampling_ = false;
 
     std::unique_ptr<Node<PointT>> root_;
 

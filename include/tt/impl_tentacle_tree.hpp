@@ -293,12 +293,12 @@ growTreeUntilAbsorption(std::unique_ptr<Node<PointT>> node,
 
 template <std::random_access_iterator BeginIt, std::random_access_iterator EndIt, Point3d PointT>
 void insert(BeginIt begin, EndIt end, Node<PointT> &node, std::size_t bucket_size,
-            PointCoordinateTypeT<PointT> min_extent);
+            PointCoordinateTypeT<PointT> min_extent, bool enable_downsampling = false);
 
 template <std::random_access_iterator BeginIt, std::random_access_iterator EndIt, Point3d PointT>
 void splitAndInsertPoints(BeginIt begin, EndIt end, Node<PointT> &node,
                           const std::size_t bucket_size,
-                          const PointCoordinateTypeT<PointT> min_extent) {
+                          const PointCoordinateTypeT<PointT> min_extent, bool enable_downsampling) {
     using CoordT = PointCoordinateTypeT<PointT>;
     auto octant_points = impl::distributePointsToOctants<PointT>(begin, end, node.center);
     CoordT child_half_extent = node.half_extent * CoordT(0.5);
@@ -315,15 +315,13 @@ void splitAndInsertPoints(BeginIt begin, EndIt end, Node<PointT> &node,
                 std::make_unique<Node<PointT>>(child_center, child_half_extent);
         }
         insert(points_in_octant.begin(), points_in_octant.end(), *node.children[octant_idx],
-               bucket_size, min_extent);
+               bucket_size, min_extent, enable_downsampling);
     }
 }
 
 template <std::random_access_iterator BeginIt, std::random_access_iterator EndIt, Point3d PointT>
 void insertIntoLeaf(BeginIt begin, EndIt end, Node<PointT> &node, const std::size_t bucket_size,
                     std::size_t num_points) {
-    // TODO: downsampling
-    // For now just add the points we can
     auto new_size = node.points.size() + num_points;
     if (new_size > bucket_size) {
         new_size = bucket_size;
@@ -347,7 +345,7 @@ bool hasChildren(const Node<PointT> &node) {
 
 template <std::random_access_iterator BeginIt, std::random_access_iterator EndIt, Point3d PointT>
 void insert(BeginIt begin, EndIt end, Node<PointT> &node, const std::size_t bucket_size,
-            const PointCoordinateTypeT<PointT> min_extent) {
+            const PointCoordinateTypeT<PointT> min_extent, bool enable_downsampling) {
     //     The process of adding new points to an octant Co is similar
     // to the construction of an octant. If Co is a leaf node and it
     // satisfies the subdivision criteria, all points (i.e., old points and
@@ -377,7 +375,7 @@ void insert(BeginIt begin, EndIt end, Node<PointT> &node, const std::size_t buck
             auto octant_points = impl::distributePointsToOctants<PointT>(
                 new_points.begin(), new_points.end(), node.center);
             for (auto &points : octant_points) {
-                splitAndInsertPoints(points.begin(), points.end(), node, bucket_size, min_extent);
+                splitAndInsertPoints(points.begin(), points.end(), node, bucket_size, min_extent, enable_downsampling);
             }
             return;
         } else {
@@ -389,8 +387,21 @@ void insert(BeginIt begin, EndIt end, Node<PointT> &node, const std::size_t buck
 
     const bool needs_splitting = num_points > bucket_size and not is_smallest_possible;
     if (needs_splitting) {
-        splitAndInsertPoints(begin, end, node, bucket_size, min_extent);
+        splitAndInsertPoints(begin, end, node, bucket_size, min_extent, enable_downsampling);
     } else {
+        // Downsampling
+        // Section II. B. Dynamic Updates 1) Incremental Update
+        // If down-sampling is enabled, eo ≤ 2emin, and
+        // |Po| > b/8, new points will be deleted later instead of being
+        // added to Co. Otherwise, a segment of continuous memory
+        // will be allocated for the updated points.
+
+        // I'm very confused as to why we are checking |Po| > b/8 here. Shouldn't
+        // we just check against the bucket size? It sounds like the author is
+        // operating at a level where the octant may still be split later?
+        if (enable_downsampling and is_smallest_possible and num_points > bucket_size / 8) {
+            return;
+        }
         insertIntoLeaf(begin, end, node, bucket_size, num_points);
     }
 }
@@ -457,7 +468,7 @@ template <Point3d PointT>
 Node<PointT> &findClosestLeafNode(Node<PointT> &node, const PointT &point,
                                   PointCoordinateTypeT<PointT> min_extent) {
     // TODO: This might be wrong and should check if the children are nullptr instead
-    if (isNodeSmallestPossible<PointT>(node, min_extent)) {
+    if (not hasChildren<PointT>(node)) {
         return node;
     }
 
@@ -608,7 +619,7 @@ void TentacleTree<PointT>::insert(BeginIt begin, EndIt end) {
 
     auto bbox = impl::computeBoundingBox(begin, end);
     root_ = impl::growTreeUntilAbsorption(std::move(root_), bbox);
-    impl::insert(begin, end, *root_, bucket_size_, min_extent_);
+    impl::insert(begin, end, *root_, bucket_size_, min_extent_, enable_downsampling_);
 }
 
 template <Point3d PointT>
