@@ -467,7 +467,6 @@ auto distance(const Node<PointT> &node, const PointT &point) {
 template <Point3d PointT>
 Node<PointT> &findClosestLeafNode(Node<PointT> &node, const PointT &point,
                                   PointCoordinateTypeT<PointT> min_extent) {
-    // TODO: This might be wrong and should check if the children are nullptr instead
     if (not hasChildren<PointT>(node)) {
         return node;
     }
