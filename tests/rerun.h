@@ -4,8 +4,49 @@
 #include "point.h"
 #include "tt/tentacle_tree.hpp"
 #include <numeric>
-#include <rerun.hpp>
+#include <optional>
 #include <vector>
+
+// Provide real rerun declarations when available, otherwise provide minimal stubs so code
+// depending on `rerun.h` compiles even when the SDK is not present.
+#ifdef RERUN_ENABLED
+#include <rerun.hpp>
+#else
+namespace rerun {
+struct Position3D {
+    double x, y, z;
+    Position3D(double a, double b, double c) : x(a), y(b), z(c) {}
+};
+
+namespace components {
+struct Translation3D {
+    float x, y, z;
+    Translation3D(float a, float b, float c) : x(a), y(b), z(c) {}
+};
+struct HalfSize3D {
+    float x, y, z;
+    HalfSize3D(float a, float b, float c) : x(a), y(b), z(c) {}
+};
+} // namespace components
+
+struct Color {
+    int r, g, b;
+    Color(int rr, int gg, int bb) : r(rr), g(gg), b(bb) {}
+};
+
+struct Boxes3D {
+    static Boxes3D from_centers_and_half_sizes(const std::vector<components::Translation3D> &,
+                                               const std::vector<components::HalfSize3D> &) {
+        return Boxes3D();
+    }
+    static Boxes3D from_mins_and_sizes(const std::vector<std::array<float, 3>> &,
+                                       const std::vector<std::array<float, 3>> &) {
+        return Boxes3D();
+    }
+    Boxes3D with_colors(const Color &) const { return *this; }
+};
+} // namespace rerun
+#endif
 
 template <typename FloatT>
 std::vector<rerun::Position3D> toRerunPositions(const std::vector<Point<FloatT>> &points) {

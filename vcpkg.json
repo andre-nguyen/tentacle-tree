@@ -2,7 +2,14 @@
   "builtin-baseline": "5fd417f2d01fa23db6d75a3e39a1107697a78e7f",
   "dependencies": [
     "benchmark",
-    "doctest",
-    "rerun-sdk"
-  ]
+    "doctest"
+  ],
+  "features": {
+    "rerun": {
+      "description": "Enable optional rerun-sdk dependency",
+      "dependencies": [
+        "rerun-sdk"
+      ]
+    }
+  }
 }

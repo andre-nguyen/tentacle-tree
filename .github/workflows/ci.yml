@@ -1,0 +1,37 @@
+name: C/C++ CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        compiler: [gcc, clang]
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: run-vcpkg
+        uses: lukka/run-vcpkg@v11.5
+        with:
+          vcpkgDirectory: '${{ github.workspace }}/vcpkg'
+
+      - name: Export VCPKG_ROOT for subsequent steps
+        run: |
+          echo "VCPKG_ROOT=${{ github.workspace }}/vcpkg" >> $GITHUB_ENV
+
+      - name: Configure (CMake preset)
+        run: |
+          if [ "${{ matrix.compiler }}" = "clang" ]; then export CC=clang; export CXX=clang++; else export CC=gcc; export CXX=g++; fi
+          cmake --preset=ninja-multiconfig
+
+      - name: Build and Test Debug + Release
+        run: |
+          # Build and test both Debug and Release sequentially using the build presets
+          cmake --build --preset=ninja-multiconfig-Debug -- -j$(nproc)
+          ctest --test-dir build/ninja-multiconfig -C Debug --output-on-failure
+          cmake --build --preset=ninja-multiconfig-Release -- -j$(nproc)
+          ctest --test-dir build/ninja-multiconfig -C Release --output-on-failure

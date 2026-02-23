@@ -9,7 +9,6 @@
 #include <iostream>
 #include <optional>
 #include <random>
-#include <rerun.hpp>
 
 #include "point.h"
 #include "rerun.h"
@@ -868,10 +867,10 @@ TEST_CASE("findClosestLeafNode") {
         const auto &leaf =
             tt::impl::findClosestLeafNode(*tree.root(), {-1.0f, -1.0f, 0.0f}, kMinExtent);
 
-        const auto rec = rerun::RecordingStream("tentacle_tree_find_closest_leaf");
-        rec.spawn().exit_on_failure();
-        rec.log("points", rerun::Points3D(toRerunPositions(tree)));
-        rec.log("tree", toRerunBoxes(tree, rerun::Color(0, 0, 255)));
+        // const auto rec = rerun::RecordingStream("tentacle_tree_find_closest_leaf");
+        // rec.spawn().exit_on_failure();
+        // rec.log("points", rerun::Points3D(toRerunPositions(tree)));
+        // rec.log("tree", toRerunBoxes(tree, rerun::Color(0, 0, 255)));
 
         REQUIRE(leaf.points.size() == 2);
         REQUIRE(leaf.points[0].x() == doctest::Approx(-10.0f));
