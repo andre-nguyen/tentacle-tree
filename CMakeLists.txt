@@ -12,7 +12,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(benchmark CONFIG REQUIRED)
 find_package(doctest CONFIG REQUIRED)
-find_package(rerun_sdk CONFIG REQUIRED)
+find_package(rerun_sdk CONFIG QUIET)
+
+# If rerun_sdk was found, we'll link it into tests/benchmarks and define RERUN_ENABLED
+if (rerun_sdk_FOUND)
+        message(STATUS "Found rerun_sdk: enabling RERUN_ENABLED")
+else()
+        message(STATUS "rerun_sdk not found: building without rerun support")
+endif()
 
 include(CTest)
 
@@ -62,7 +69,7 @@ target_link_libraries(tentacle-tree-test
         PRIVATE
         tentacle-tree
         doctest::doctest
-        rerun_sdk
+        $<$<BOOL:${rerun_sdk_FOUND}>:rerun_sdk>
 )
 target_compile_options(tentacle-tree-test
         PRIVATE
@@ -78,5 +85,10 @@ target_link_libraries(tentacle-tree-benchmark
         tentacle-tree
         benchmark::benchmark
         benchmark::benchmark_main
-        rerun_sdk
+        $<$<BOOL:${rerun_sdk_FOUND}>:rerun_sdk>
 )
+
+if (rerun_sdk_FOUND)
+    target_compile_definitions(tentacle-tree-test PRIVATE RERUN_ENABLED)
+    target_compile_definitions(tentacle-tree-benchmark PRIVATE RERUN_ENABLED)
+endif()

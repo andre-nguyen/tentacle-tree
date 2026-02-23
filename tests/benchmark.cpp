@@ -3,7 +3,7 @@
 #include "tt/impl/asc_io.hpp"
 #include "tt/tentacle_tree.hpp"
 #include <benchmark/benchmark.h>
-#include <rerun.hpp>
+
 
 std::vector<Point<float>> loadCloud(const std::filesystem::path &path) {
     auto cloud = tt::loadASC<float>("matterhorn.asc");

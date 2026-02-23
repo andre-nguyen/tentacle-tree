@@ -9,7 +9,6 @@
 #include <iostream>
 #include <optional>
 #include <random>
-#include <rerun.hpp>
 
 #include "point.h"
 #include "rerun.h"
