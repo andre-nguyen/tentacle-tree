@@ -35,3 +35,29 @@ jobs:
           ctest --test-dir build/ninja-multiconfig -C Debug --output-on-failure
           cmake --build --preset=ninja-multiconfig-Release -- -j$(nproc)
           ctest --test-dir build/ninja-multiconfig -C Release --output-on-failure
+
+  windows-msvc:
+    name: Windows MSVC
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: run-vcpkg
+        uses: lukka/run-vcpkg@v11.5
+        with:
+          vcpkgDirectory: '${{ github.workspace }}/vcpkg'
+
+      - name: Export VCPKG_ROOT for subsequent steps
+        run: |
+          echo "VCPKG_ROOT=${{ github.workspace }}/vcpkg" >> $GITHUB_ENV
+
+      - name: Configure (CMake preset)
+        run: |
+          cmake --preset=ninja-multiconfig
+
+      - name: Build and Test Debug + Release
+        run: |
+          cmake --build --preset=ninja-multiconfig-Debug
+          ctest --test-dir build/ninja-multiconfig -C Debug --output-on-failure
+          cmake --build --preset=ninja-multiconfig-Release
+          ctest --test-dir build/ninja-multiconfig -C Release --output-on-failure
